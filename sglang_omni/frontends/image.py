@@ -8,10 +8,21 @@ from typing import Any
 
 from PIL import Image
 
+from .cache_key import compute_media_cache_key
+
 
 def load_image_path(path: str | Path) -> Image.Image:
     """Load an image from disk as RGB."""
     return Image.open(path).convert("RGB")
+
+
+def compute_image_cache_key(images: Any) -> str | None:
+    """Compute cache key from raw image inputs (paths, URLs, PIL Images).
+
+    This should be called BEFORE ensure_image_list() to capture original
+    paths/URLs which are much cheaper to hash than pixel data.
+    """
+    return compute_media_cache_key(images, prefix="image")
 
 
 def ensure_image_list(images: Any) -> list[Any]:

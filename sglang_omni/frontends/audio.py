@@ -10,6 +10,8 @@ from typing import Any
 import numpy as np
 import torch
 
+from .cache_key import compute_media_cache_key
+
 
 def _read_wav_bytes(path: str) -> tuple[np.ndarray, int]:
     """Read PCM/IEEE-float WAV without external deps."""
@@ -124,3 +126,12 @@ def build_audio_mm_inputs(hf_inputs: dict[str, Any]) -> dict[str, Any]:
         "feature_attention_mask": feature_attention_mask,
         "audio_feature_lengths": audio_feature_lengths,
     }
+
+
+def compute_audio_cache_key(audios: Any) -> str | None:
+    """Compute cache key from raw audio inputs (paths, numpy arrays).
+
+    This should be called BEFORE ensure_audio_list() to capture original
+    paths which are much cheaper to hash than audio data.
+    """
+    return compute_media_cache_key(audios, prefix="audio")

@@ -15,6 +15,7 @@ from .runtime.ar import (
     AROutputProcessor,
     ARResourceManager,
 )
+from .runtime.cache import SimpleCacheManager
 from .runtime.common import (
     EosIterationController,
     SimpleResourceManager,
@@ -34,6 +35,8 @@ def create_encoder_engine(
     max_batch_size: int = 32,
     pooling: str = "last",
     device: str = "cuda",
+    use_cache: bool = False,
+    cache_size: int | None = None,
 ) -> OmniEngine:
     """Create an encoder engine.
 
@@ -43,6 +46,8 @@ def create_encoder_engine(
         max_batch_size: Maximum batch size for scheduling
         pooling: Pooling strategy - "last", "mean", or "cls"
         device: Device to run on
+        use_cache: Enable encoder output cache
+        cache_size: Max cache entries (None for unbounded)
 
     Returns:
         OmniEngine configured for encoder models
@@ -74,7 +79,7 @@ def create_encoder_engine(
         iteration_controller=SinglePassIterationController(),
     )
 
-    # Create model runner
+    # Create model runner (stateless)
     model_runner = ModelRunner(
         model=model,
         input_preparer=EncoderInputPreparer(pad_token_id=pad_token_id),
@@ -82,7 +87,14 @@ def create_encoder_engine(
         device=device,
     )
 
-    return OmniEngine(scheduler=scheduler, model_runner=model_runner)
+    # Create cache manager (if needed)
+    cache_manager = None
+    if use_cache:
+        cache_manager = SimpleCacheManager(max_size=cache_size)
+
+    return OmniEngine(
+        scheduler=scheduler, model_runner=model_runner, cache_manager=cache_manager
+    )
 
 
 def create_ar_engine(
