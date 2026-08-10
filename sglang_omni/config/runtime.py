@@ -63,6 +63,9 @@ def resolve_stage_factory_arg_defaults(
     if gpu_id is None:
         gpu_id = _resolve_primary_gpu_id(stage_cfg, global_cfg)
     defaults["gpu_id"] = gpu_id
+    kv_cache_bytes = stage_cfg.runtime.memory.kv_cache_bytes
+    if kv_cache_bytes is not None:
+        defaults["kv_cache_bytes"] = kv_cache_bytes
     total_gpu_memory_fraction = stage_cfg.runtime.resources.total_gpu_memory_fraction
     if total_gpu_memory_fraction is not None:
         defaults["total_gpu_memory_fraction"] = total_gpu_memory_fraction
@@ -140,6 +143,16 @@ def _validate_runtime_sources(
     runtime_overrides: dict[str, Any],
 ) -> None:
     """Validate ownership of runtime fields."""
+
+    typed_kv_cache_bytes = stage_cfg.runtime.memory.kv_cache_bytes
+    if typed_kv_cache_bytes is not None and _server_args_mem_fraction_static_is_set(
+        factory_args,
+        runtime_overrides,
+    ):
+        raise ValueError(
+            f"Stage {stage_cfg.name!r} sets mem_fraction_static through "
+            "server_args_overrides and typed runtime.memory.kv_cache_bytes"
+        )
 
     typed_mem_fraction = stage_cfg.runtime.sglang_server_args.mem_fraction_static
     if typed_mem_fraction is not None and _server_args_mem_fraction_static_is_set(

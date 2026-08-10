@@ -43,6 +43,9 @@ class SGLangGenerationEngineBuilder(ABC):
     # CUDA graph contract; a deployment override cannot enable it otherwise.
     supports_breakable_prefill_cuda_graph: bool = False
 
+    def __init__(self, *, kv_cache_bytes: int | None = None) -> None:
+        self.kv_cache_bytes: int | None = kv_cache_bytes
+
     def build(
         self,
         model_path: str,
@@ -99,8 +102,10 @@ class SGLangGenerationEngineBuilder(ABC):
         )
         self.customize_server_args(server_args)
         self.validate_before_infrastructure(server_args)
-
         infra_kwargs = dict(self.infra_kwargs())
+        infra_kwargs = dict(self.infra_kwargs())
+        if self.kv_cache_bytes is not None:
+            infra_kwargs.setdefault("kv_cache_bytes", self.kv_cache_bytes)
         if self.model_arch_override is not None:
             infra_kwargs.setdefault("model_arch_override", self.model_arch_override)
         prefill_graph_backend = get_prefill_cuda_graph_backend(server_args)

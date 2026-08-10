@@ -50,6 +50,7 @@ class _OmniKVCacheConfigurator(KVCacheConfigurator):
     """
 
     total_gpu_memory_fraction: float | None = None
+    kv_cache_bytes: int | None = None
 
     def _profile_available_bytes(self, pre_model_load_memory: float) -> int:
         """Profile KV-cache headroom for colocated SGLang AR stages.
@@ -68,6 +69,11 @@ class _OmniKVCacheConfigurator(KVCacheConfigurator):
         upstream SGLang profiling semantics for ordinary non-colocated AR
         serving.
         """
+        if self.kv_cache_bytes is not None:
+            if self.kv_cache_bytes <= 0:
+                raise ValueError("kv_cache_bytes must be positive")
+            return self.kv_cache_bytes
+
         if self.total_gpu_memory_fraction is None:
             return KVCacheConfigurator._profile_available_bytes(
                 self, pre_model_load_memory
@@ -172,9 +178,11 @@ class SGLModelRunner(ModelRunner):
         model_arch_override: str | None = None,
         weight_prefix: str | None = None,
         total_gpu_memory_fraction: float | None = None,
+        kv_cache_bytes: int | None = None,
     ) -> None:
         self._weight_prefix = weight_prefix
         self._total_gpu_memory_fraction = total_gpu_memory_fraction
+        self._kv_cache_bytes = kv_cache_bytes
         self._model_arch_override = model_arch_override
         self._weight_share_config = None
         self._weight_share_record = None
@@ -484,4 +492,5 @@ class SGLModelRunner(ModelRunner):
                 if field.init
             },
             total_gpu_memory_fraction=self._total_gpu_memory_fraction,
+            kv_cache_bytes=self._kv_cache_bytes,
         )
