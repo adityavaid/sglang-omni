@@ -241,8 +241,7 @@ def main() -> None:
         if args.print_mps_memory_budget:
             if args.gpu_id is None or args.replicas is None:
                 parser.error(
-                    "--print-mps-memory-budget requires both --gpu-id and "
-                    "--replicas"
+                    "--print-mps-memory-budget requires both --gpu-id and " "--replicas"
                 )
             budget = _resolve_mps_memory_budget(
                 args.config,
