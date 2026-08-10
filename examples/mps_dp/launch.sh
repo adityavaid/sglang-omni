@@ -336,6 +336,8 @@ up() {
   local serve_cmd=(sgl-omni serve) source_args=() model_name_args=()
   local extra_args=() mem_args=()
   local expected_max_total_tokens=${MAX_TOTAL_TOKENS:-}
+  local mps_budget_manifest=""
+  local uuid=""
   local model_path_manifest=$model
   if [ -n "$config" ]; then
     [ -z "${MODEL:-}" ] || die "MODEL cannot be combined with CONFIG"
@@ -360,6 +362,15 @@ up() {
     expected_max_total_tokens=$("$PYTHON_BIN" "$SCRIPT_DIR/config.py" \
       "${config_resolver_args[@]}") \
       || die "could not resolve max_total_tokens from $config"
+    # Note (Adit Shar): nvidia-smi resolves GPU_ID physically even when the
+    # parent shell inherits CUDA_VISIBLE_DEVICES, so the budget helper must run
+    # in a single-UUID namespace for that same physical device and query it as
+    # logical GPU 0.
+    uuid=$(nvidia-smi --query-gpu=uuid --format=csv,noheader -i "$gpu")
+    mps_budget_manifest=$(env CUDA_VISIBLE_DEVICES="$uuid" \
+      "$PYTHON_BIN" "$SCRIPT_DIR/config.py" "$config" \
+      --print-mps-memory-budget --gpu-id 0 --replicas "$n") \
+      || die "could not resolve MPS memory budget from $config"
   else
     # Note (Jiaxin Deng): without a pipeline config the supported-model check
     # cannot run until engine startup, which is after the MPS daemon and state
@@ -408,8 +419,10 @@ up() {
     fi
   done
 
-  local uuid node run state
-  uuid=$(nvidia-smi --query-gpu=uuid --format=csv,noheader -i "$gpu")
+  local node run state
+  if [ -z "$uuid" ]; then
+    uuid=$(nvidia-smi --query-gpu=uuid --format=csv,noheader -i "$gpu")
+  fi
   node=$(resolve_numa "$gpu")
   # Note (Jiaxin Deng): a caller (autodp) may pin RUN_ID so it can tear down exactly
   # the run it started, instead of rediscovering the newest dir.
@@ -438,6 +451,9 @@ up() {
     echo "base_port=$base_port"; echo "core_blocks=$CORE_BLOCKS"
     echo "max_total_tokens=${expected_max_total_tokens:-auto/profiled}"
     echo "weight_share=$weight_share"
+    if [ -n "$mps_budget_manifest" ]; then
+      printf '%s\n' "$mps_budget_manifest"
+    fi
   } > "$state/manifest"
   if [ "$weight_share" = 1 ]; then mkdir -p "$state/ipc_weights"; chmod 700 "$state/ipc_weights"; fi
 

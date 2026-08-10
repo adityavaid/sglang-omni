@@ -85,9 +85,9 @@ class StageMemoryConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     kv_cache_bytes: int | None = None
-    non_kv_reserve_bytes: int | None = None
+    total_reserve_bytes: int | None = None
 
-    @field_validator("kv_cache_bytes", "non_kv_reserve_bytes", mode="before")
+    @field_validator("kv_cache_bytes", "total_reserve_bytes", mode="before")
     @classmethod
     def parse_memory_bytes(
         cls,
@@ -126,6 +126,17 @@ class StageMemoryConfig(BaseModel):
             "TiB": 1024**4,
         }
         return quantity * unit_multipliers[match.group(2)]
+
+    def model_post_init(self, __context: Any = None) -> None:
+        if (
+            self.kv_cache_bytes is not None
+            and self.total_reserve_bytes is not None
+            and self.kv_cache_bytes > self.total_reserve_bytes
+        ):
+            raise ValueError(
+                "runtime.memory.kv_cache_bytes must not exceed "
+                "runtime.memory.total_reserve_bytes"
+            )
 
 
 class SGLangServerArgsConfig(BaseModel):
