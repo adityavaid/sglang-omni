@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import importlib
 import inspect
-from types import SimpleNamespace
+import sys
+from types import ModuleType, SimpleNamespace
 from typing import Any
 
 import pytest
@@ -86,7 +87,33 @@ def test_tts_engine_builder_hook_contract_is_narrow() -> None:
 
 
 def test_tts_engine_builder_phase_order_and_override_contract(monkeypatch) -> None:
-    from sglang_omni.scheduling import bootstrap, sglang_backend
+    fake_sglang = ModuleType("sglang")
+    fake_srt = ModuleType("sglang.srt")
+    fake_model_executor = ModuleType("sglang.srt.model_executor")
+    fake_cuda_graph_config = ModuleType("sglang.srt.model_executor.cuda_graph_config")
+
+    class FakeCudaGraphConfig:
+        def to_dict(self) -> dict[str, Any]:
+            return {}
+
+    class FakeCudaGraphBackend:
+        DISABLED = "disabled"
+        BREAKABLE = "breakable"
+
+    fake_cuda_graph_config.Backend = FakeCudaGraphBackend
+    fake_cuda_graph_config.CudaGraphConfig = FakeCudaGraphConfig
+    fake_sglang.srt = fake_srt
+    fake_srt.model_executor = fake_model_executor
+    fake_model_executor.cuda_graph_config = fake_cuda_graph_config
+    monkeypatch.setitem(sys.modules, "sglang", fake_sglang)
+    monkeypatch.setitem(sys.modules, "sglang.srt", fake_srt)
+    monkeypatch.setitem(sys.modules, "sglang.srt.model_executor", fake_model_executor)
+    monkeypatch.setitem(
+        sys.modules,
+        "sglang.srt.model_executor.cuda_graph_config",
+        fake_cuda_graph_config,
+    )
+
     from sglang_omni.scheduling.engine_factory import TtsEngineBuilder
 
     monkeypatch.setattr(
@@ -150,15 +177,15 @@ def test_tts_engine_builder_phase_order_and_override_contract(monkeypatch) -> No
         server_args: Any,
         gpu_id: int,
         **kwargs: Any,
-    ) -> tuple[Any, ...]:
+    ) -> tuple[bool, tuple[Any, ...]]:
         events.append("infrastructure")
         assert gpu_id == 2
         assert kwargs == {
-            "defer_cuda_graph_capture": True,
+            "kv_cache_bytes": 123,
             "model_arch_override": "TestArch",
         }
         infrastructure_saw_graph_disabled.append(bool(server_args.disable_cuda_graph))
-        return (
+        return True, (
             FakeWorker(server_args),
             "tree_cache",
             "req_pool",
@@ -175,22 +202,37 @@ def test_tts_engine_builder_phase_order_and_override_contract(monkeypatch) -> No
         assert isinstance(kwargs["model"], FakeModel)
         return SimpleNamespace(**kwargs)
 
-    monkeypatch.setattr(
-        sglang_backend,
-        "build_sglang_server_args",
-        fake_build_sglang_server_args,
+    fake_bootstrap = ModuleType("sglang_omni.scheduling.bootstrap")
+    fake_bootstrap.create_sglang_infrastructure_defer_cuda_graph = (
+        fake_create_sglang_infrastructure
     )
-    monkeypatch.setattr(
-        bootstrap,
-        "create_sglang_infrastructure",
-        fake_create_sglang_infrastructure,
+
+    def fake_init_sglang_cuda_graphs(_model_worker: Any) -> None:
+        events.append("init_graphs")
+        init_graph_calls.append(True)
+
+    fake_bootstrap.init_sglang_cuda_graphs = fake_init_sglang_cuda_graphs
+    fake_sglang_backend = ModuleType("sglang_omni.scheduling.sglang_backend")
+    fake_sglang_backend.build_sglang_server_args = fake_build_sglang_server_args
+    fake_sglang_backend.SGLangOutputProcessor = fake_output_processor
+    monkeypatch.setitem(
+        sys.modules,
+        "sglang_omni.scheduling.bootstrap",
+        fake_bootstrap,
     )
-    monkeypatch.setattr(sglang_backend, "SGLangOutputProcessor", fake_output_processor)
+    monkeypatch.setitem(
+        sys.modules,
+        "sglang_omni.scheduling.sglang_backend",
+        fake_sglang_backend,
+    )
 
     class RecordingBuilder(TtsEngineBuilder):
         model_name = "Test TTS"
         context_length = 123
         model_arch_override = "TestArch"
+
+        def __init__(self, *, kv_cache_bytes: int | None = None) -> None:
+            super().__init__(kv_cache_bytes=kv_cache_bytes)
 
         def resolve_checkpoint(self, model_path: str) -> str:
             events.append("resolve_checkpoint")
@@ -302,7 +344,7 @@ def test_tts_engine_builder_phase_order_and_override_contract(monkeypatch) -> No
             events.append("post_scheduler_setup")
             model_runner.outbox = scheduler.outbox
 
-    scheduler = RecordingBuilder().build(
+    scheduler = RecordingBuilder(kv_cache_bytes=123).build(
         "model",
         device="cuda:0",
         gpu_id=2,
@@ -340,7 +382,7 @@ def test_tts_engine_builder_phase_order_and_override_contract(monkeypatch) -> No
     assert build_kwargs["torch_compile_max_bs"] == 8
     assert build_kwargs["mem_fraction_static"] == 0.7
     assert build_kwargs["max_total_tokens"] == TEST_MAX_TOTAL_TOKENS
-    assert infrastructure_saw_graph_disabled == [True]
+    assert infrastructure_saw_graph_disabled == [False]
     assert init_graph_calls == [True]
     assert scheduler.kwargs["server_args"].disable_cuda_graph is False
     assert scheduler.kwargs["model_runner"].outbox == "outbox"

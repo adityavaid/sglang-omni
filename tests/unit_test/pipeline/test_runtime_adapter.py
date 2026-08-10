@@ -7,17 +7,60 @@ from sglang_omni.config import (
     PipelineConfig,
     SGLangServerArgsConfig,
     StageConfig,
+    StageMemoryConfig,
     StageResourceConfig,
     StageRuntimeConfig,
     resolve_stage_factory_args,
 )
-from sglang_omni.config.runtime import resolve_stage_static_factory_args
-from sglang_omni.models.qwen3_omni.config import Qwen3OmniSpeechPipelineConfig
-
-_FACTORY = "tests.unit_test.fixtures.pipeline_fakes.runtime_factory"
-_FACTORY_WITHOUT_TOTAL_BUDGET = (
-    "tests.unit_test.fixtures.pipeline_fakes.runtime_factory_without_total_budget"
+from sglang_omni.config.runtime import (
+    resolve_stage_factory_arg_defaults,
+    resolve_stage_static_factory_args,
 )
+
+
+def runtime_factory(
+    *,
+    model_path: str,
+    gpu_id: int,
+    thinker_max_seq_len: int | None = None,
+    video_fps: float | None = None,
+    server_args_overrides: dict[str, object] | None = None,
+    total_gpu_memory_fraction: float | None = None,
+) -> dict[str, object]:
+    return {
+        "model_path": model_path,
+        "gpu_id": gpu_id,
+        "thinker_max_seq_len": thinker_max_seq_len,
+        "video_fps": video_fps,
+        "server_args_overrides": server_args_overrides,
+        "total_gpu_memory_fraction": total_gpu_memory_fraction,
+    }
+
+
+def runtime_factory_without_total_budget(
+    *,
+    model_path: str,
+    gpu_id: int,
+    server_args_overrides: dict[str, object] | None = None,
+) -> dict[str, object]:
+    return {
+        "model_path": model_path,
+        "gpu_id": gpu_id,
+        "server_args_overrides": server_args_overrides,
+    }
+
+
+_FACTORY = "tests.unit_test.pipeline.test_runtime_adapter.runtime_factory"
+_FACTORY_WITHOUT_TOTAL_BUDGET = (
+    "tests.unit_test.pipeline.test_runtime_adapter.runtime_factory_without_total_budget"
+)
+
+
+def _qwen3_omni_speech_pipeline_config():
+    pytest.importorskip("sglang")
+    from sglang_omni.models.qwen3_omni.config import Qwen3OmniSpeechPipelineConfig
+
+    return Qwen3OmniSpeechPipelineConfig
 
 
 def _stage(**kwargs) -> StageConfig:
@@ -80,6 +123,17 @@ def test_total_gpu_memory_fraction_is_not_injected_into_unrelated_factories() ->
 
     assert "total_gpu_memory_fraction" not in args
     assert args["server_args_overrides"] == {"mem_fraction_static": 0.72}
+
+
+def test_factory_defaults_include_typed_kv_budget() -> None:
+    stage = _stage(
+        runtime=StageRuntimeConfig(memory=StageMemoryConfig(kv_cache_bytes="2GiB"))
+    )
+    config = PipelineConfig(model_path="dummy-model", stages=[stage])
+
+    defaults = resolve_stage_factory_arg_defaults(stage, config, gpu_id=0)
+
+    assert defaults["kv_cache_bytes"] == 2 * 1024**3
 
 
 def test_typed_sglang_runtime_rejects_compat_mem_fraction_duplicate() -> None:
@@ -225,6 +279,7 @@ def test_rank_gpu_id_can_be_supplied_by_launch_planner() -> None:
 
 
 def test_runtime_override_wins_over_qwen_model_default() -> None:
+    Qwen3OmniSpeechPipelineConfig = _qwen3_omni_speech_pipeline_config()
     config = Qwen3OmniSpeechPipelineConfig(
         model_path="dummy-model",
         runtime_overrides={"thinker": {"thinker_max_seq_len": 16384}},
@@ -237,6 +292,7 @@ def test_runtime_override_wins_over_qwen_model_default() -> None:
 
 
 def test_explicit_typed_runtime_rejects_runtime_override_duplicate() -> None:
+    Qwen3OmniSpeechPipelineConfig = _qwen3_omni_speech_pipeline_config()
     config = Qwen3OmniSpeechPipelineConfig(
         model_path="dummy-model",
         runtime_overrides={"thinker": {"thinker_max_seq_len": 16384}},
@@ -249,6 +305,7 @@ def test_explicit_typed_runtime_rejects_runtime_override_duplicate() -> None:
 
 
 def test_typed_runtime_can_override_static_model_factory_default() -> None:
+    Qwen3OmniSpeechPipelineConfig = _qwen3_omni_speech_pipeline_config()
     config = Qwen3OmniSpeechPipelineConfig(model_path="dummy-model")
     thinker = next(stage for stage in config.stages if stage.name == "thinker")
     assert thinker.factory_args["thinker_max_seq_len"] == 8192
