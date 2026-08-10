@@ -40,6 +40,7 @@ class Qwen3ASREngineBuilder(AsrEngineBuilder):
         *,
         max_running_requests: int,
         max_new_tokens: int,
+        kv_cache_bytes: int | None = None,
         enable_async_decode: bool,
         async_decode_min_batch_size: int,
         mem_fraction_static: float | None,
@@ -60,6 +61,7 @@ class Qwen3ASREngineBuilder(AsrEngineBuilder):
         pre_lm_max_batch_size: int = 8,
         pre_lm_max_batch_wait_ms: int = 0,
     ) -> None:
+        super().__init__(kv_cache_bytes=kv_cache_bytes)
         if pre_lm_max_batch_size < 1:
             raise ValueError(
                 f"pre_lm_max_batch_size must be >= 1, got {pre_lm_max_batch_size}"

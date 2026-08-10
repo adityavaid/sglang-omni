@@ -320,6 +320,7 @@ def create_sglang_tts_engine_executor(
     return FishS2ProEngineBuilder(
         max_new_tokens=max_new_tokens,
         ras_window=ras_window,
+        kv_cache_bytes=kv_cache_bytes,
     ).build(
         model_path,
         device=device,

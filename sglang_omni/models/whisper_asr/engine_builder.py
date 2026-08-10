@@ -44,16 +44,9 @@ class WhisperASREngineBuilder(AsrEngineBuilder):
         max_running_requests: int,
         max_new_tokens: int,
         mem_fraction_static: float,
-        enable_encoder_cuda_graph: bool = False,
-        encoder_graph_batch_buckets: list[int] | None = None,
-        request_build_max_workers: int = 2,
-        request_build_max_pending: int | None = 16,
-        prefill_coalesce_requests: int = 2,
-        prefill_coalesce_wait_ms: float = 6.0,
-        prefill_coalesce_when_idle: bool = True,
-        prefill_coalesce_requires_pending_builds: bool = True,
-        prefill_coalesce_after_builds_during_decode: bool = False,
+        kv_cache_bytes: int | None = None,
     ) -> None:
+        super().__init__(kv_cache_bytes=kv_cache_bytes)
         self.max_running_requests = max_running_requests
         self.max_new_tokens = max_new_tokens
         self.mem_fraction_static = mem_fraction_static

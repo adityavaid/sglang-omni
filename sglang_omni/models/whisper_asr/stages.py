@@ -10,6 +10,7 @@ def create_sglang_whisper_asr_executor(
     model_path: str,
     *,
     device: str = "cuda:0",
+    kv_cache_bytes: int | None = None,
     dtype: str = "float16",
     max_running_requests: int = 16,
     max_new_tokens: int = 256,
@@ -28,6 +29,7 @@ def create_sglang_whisper_asr_executor(
     from sglang_omni.models.whisper_asr.engine_builder import WhisperASREngineBuilder
 
     return WhisperASREngineBuilder(
+        kv_cache_bytes=kv_cache_bytes,
         max_running_requests=max_running_requests,
         mem_fraction_static=mem_fraction_static,
         max_new_tokens=max_new_tokens,

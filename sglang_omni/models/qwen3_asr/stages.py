@@ -9,8 +9,8 @@ from typing import Any
 def create_sglang_qwen3_asr_executor(
     model_path: str,
     *,
-    device: str | None = None,
-    gpu_id: int | None = None,
+    device: str = "cuda:0",
+    kv_cache_bytes: int | None = None,
     dtype: str = "auto",
     max_running_requests: int = 64,
     max_new_tokens: int = 256,
@@ -38,6 +38,7 @@ def create_sglang_qwen3_asr_executor(
     from sglang_omni.models.qwen3_asr.engine_builder import Qwen3ASREngineBuilder
 
     return Qwen3ASREngineBuilder(
+        kv_cache_bytes=kv_cache_bytes,
         max_running_requests=max_running_requests,
         max_new_tokens=max_new_tokens,
         enable_async_decode=enable_async_decode,
