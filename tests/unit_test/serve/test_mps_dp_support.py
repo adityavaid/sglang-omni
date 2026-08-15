@@ -274,27 +274,24 @@ def _write_budget_yaml(
     tmp_path: Path,
     *,
     kv_cache_bytes: str,
-    total_reserve_bytes: str,
+    total_reserve_bytes: str | None = None,
     name: str = "budget-probe",
 ) -> Path:
     path = tmp_path / f"{name}.yaml"
-    path.write_text(
-        "\n".join(
-            [
-                "config_cls: Qwen3ASRPipelineConfig",
-                f"name: {name}",
-                "model_path: dummy/none",
-                "stage_overrides:",
-                "  asr:",
-                "    runtime:",
-                "      memory:",
-                f"        kv_cache_bytes: {kv_cache_bytes}",
-                f"        total_reserve_bytes: {total_reserve_bytes}",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
+    lines = [
+        "config_cls: Qwen3ASRPipelineConfig",
+        f"name: {name}",
+        "model_path: dummy/none",
+        "stage_overrides:",
+        "  asr:",
+        "    runtime:",
+        "      memory:",
+        f"        kv_cache_bytes: {kv_cache_bytes}",
+    ]
+    if total_reserve_bytes is not None:
+        lines.append(f"        total_reserve_bytes: {total_reserve_bytes}")
+    lines.append("")
+    path.write_text("\n".join(lines), encoding="utf-8")
     return path
 
 
@@ -625,6 +622,67 @@ class TestLaunchFailsClosedBeforeResources:
         assert "requested=18.00GiB" in combined
         assert "available=16.00GiB" in combined
         assert not state_root.exists()
+
+    def test_omitted_total_reserve_defaults_to_even_split(self, tmp_path):
+        """A kv-only config must survive preflight at N >= 2.
+
+        An omitted total_reserve_bytes is an even split of the card, so two
+        6GiB-KV replicas fit inside a 16GiB GPU (8GiB each) and preflight must
+        not raise the over-subscription error.
+        """
+        yaml_path = _write_budget_yaml(tmp_path, kv_cache_bytes="6GiB")
+        fake_nvidia_smi_dir = _write_fake_nvidia_smi(tmp_path)
+        proc, _ = self._run(
+            tmp_path,
+            yaml_path,
+            MPS_DP_FAKE_TOTAL_MEMORY_BYTES=str(16 * 1024**3),
+            PATH=f"{fake_nvidia_smi_dir}{os.pathsep}{os.environ.get('PATH', '')}",
+        )
+        combined = proc.stdout + proc.stderr
+        assert "exceeds available" not in combined
+        assert "total_reserve_bytes" not in combined
+
+    def test_omitted_total_reserve_rejects_kv_larger_than_even_split(self, tmp_path):
+        """The even-split error must name the split, not a value the user never set."""
+        yaml_path = _write_budget_yaml(tmp_path, kv_cache_bytes="10GiB")
+        fake_nvidia_smi_dir = _write_fake_nvidia_smi(tmp_path)
+        proc, state_root = self._run(
+            tmp_path,
+            yaml_path,
+            MPS_DP_FAKE_TOTAL_MEMORY_BYTES=str(16 * 1024**3),
+            PATH=f"{fake_nvidia_smi_dir}{os.pathsep}{os.environ.get('PATH', '')}",
+        )
+        assert proc.returncode != 0
+        combined = proc.stdout + proc.stderr
+        assert "2-way even split" in combined
+        assert "10.00GiB" in combined
+        assert "8.00GiB" in combined
+        assert not state_root.exists()
+
+    def test_weight_share_preflight_skips_n_way_total(self, tmp_path):
+        """WEIGHT_SHARE=1 must not charge (N-1) phantom weight copies.
+
+        2 x 9GiB = 18GiB over-subscribes a 16GiB card and is rejected without
+        sharing (see test_budget_preflight_failure_leaves_no_state). Under
+        CUDA IPC the backbone is resident once, so the N-way total is not a
+        valid bound; preflight falls back to the per-replica bound and warns.
+        """
+        yaml_path = _write_budget_yaml(
+            tmp_path,
+            kv_cache_bytes="6GiB",
+            total_reserve_bytes="9GiB",
+        )
+        fake_nvidia_smi_dir = _write_fake_nvidia_smi(tmp_path)
+        proc, _ = self._run(
+            tmp_path,
+            yaml_path,
+            WEIGHT_SHARE="1",
+            MPS_DP_FAKE_TOTAL_MEMORY_BYTES=str(16 * 1024**3),
+            PATH=f"{fake_nvidia_smi_dir}{os.pathsep}{os.environ.get('PATH', '')}",
+        )
+        combined = proc.stdout + proc.stderr
+        assert "MPS byte-budget preflight exceeds physical VRAM" not in combined
+        assert "2-way total is NOT validated" in combined
 
     def test_budget_preflight_uses_resolved_physical_gpu_uuid(self, tmp_path):
         yaml_path = _write_budget_yaml(

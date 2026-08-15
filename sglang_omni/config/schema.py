@@ -80,7 +80,17 @@ class StageResourceConfig(BaseModel):
 
 
 class StageMemoryConfig(BaseModel):
-    """Typed per-stage memory budgeting configuration."""
+    """Typed per-stage memory budgeting configuration.
+
+    Enforcement differs sharply between the two fields, and callers must not
+    assume otherwise:
+
+    ``kv_cache_bytes`` is **authoritative**. It is injected into the KV-cache
+    configurator and becomes the stage's actual KV pool size.
+
+    ``total_reserve_bytes`` is a **declared estimate, not an enforced
+    reservation**.
+    """
 
     model_config = ConfigDict(extra="forbid")
 

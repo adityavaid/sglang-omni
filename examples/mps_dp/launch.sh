@@ -367,9 +367,12 @@ up() {
     # in a single-UUID namespace for that same physical device and query it as
     # logical GPU 0.
     uuid=$(nvidia-smi --query-gpu=uuid --format=csv,noheader -i "$gpu")
+    local budget_args=("$config" --print-mps-memory-budget --gpu-id 0 --replicas "$n")
+    if [ "$weight_share" = 1 ]; then
+      budget_args+=(--weight-share)
+    fi
     mps_budget_manifest=$(env CUDA_VISIBLE_DEVICES="$uuid" \
-      "$PYTHON_BIN" "$SCRIPT_DIR/config.py" "$config" \
-      --print-mps-memory-budget --gpu-id 0 --replicas "$n") \
+      "$PYTHON_BIN" "$SCRIPT_DIR/config.py" "${budget_args[@]}") \
       || die "could not resolve MPS memory budget from $config"
   else
     # Note (Jiaxin Deng): without a pipeline config the supported-model check

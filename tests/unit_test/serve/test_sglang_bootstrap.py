@@ -9,24 +9,14 @@ from types import SimpleNamespace
 
 import pytest
 
-if "sglang.srt.server_args" not in sys.modules:
-    sglang_pkg = types.ModuleType("sglang")
-    sglang_pkg.__path__ = []
-    srt_pkg = types.ModuleType("sglang.srt")
-    srt_pkg.__path__ = []
-    server_args_mod = types.ModuleType("sglang.srt.server_args")
-    server_args_mod.get_global_server_args = lambda: None
-    sys.modules.setdefault("sglang", sglang_pkg)
-    sys.modules.setdefault("sglang.srt", srt_pkg)
-    sys.modules.setdefault("sglang.srt.server_args", server_args_mod)
-
-from sglang_omni.config import (
+from sglang_omni.config.runtime import resolve_stage_factory_args
+from sglang_omni.config.schema import (
     PipelineConfig,
     StageConfig,
     StageMemoryConfig,
     StageRuntimeConfig,
-    resolve_stage_factory_args,
 )
+from sglang_omni.model_runner import _hidden_capture as hidden_capture_module
 from sglang_omni.model_runner import model_worker as model_worker_module
 from sglang_omni.scheduling import bootstrap
 from tests.unit_test.fakes import FakeServerArgs

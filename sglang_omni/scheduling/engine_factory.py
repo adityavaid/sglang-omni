@@ -50,24 +50,18 @@ class SGLangGenerationEngineBuilder(ABC):
         self,
         model_path: str,
         *,
-        device: str | None = None,
+        device: str = "cuda:0",
         gpu_id: int | None = None,
         dtype: str = "bfloat16",
         server_args_overrides: dict[str, Any] | None = None,
     ) -> Any:
-        import torch
-
         from sglang_omni.scheduling import bootstrap as scheduling_bootstrap
         from sglang_omni.scheduling import sglang_backend
-        from sglang_omni.utils.device import place_device_spec, resolve_device_spec
 
         checkpoint_dir = self.resolve_checkpoint(model_path)
-        device = (
-            resolve_device_spec(None, gpu_id)
-            if device is None
-            else place_device_spec(device, gpu_id)
-        )
-        gpu_id = torch.device(device).index or 0
+        if gpu_id is not None:
+            device = f"cuda:{gpu_id}"
+        gpu_id = int(device.split(":")[-1]) if ":" in device else 0
         self.checkpoint_dir = checkpoint_dir
         self.device = device
         self.gpu_id = gpu_id
@@ -83,17 +77,6 @@ class SGLangGenerationEngineBuilder(ABC):
             **self.generation_defaults(dtype=dtype),
         )
         self.adjust_overrides(overrides)
-        # Left unset, SGLang re-detects off a CUDA-first ladder that can contradict
-        # placement. It owns the type, not the index.
-        resolved_type = torch.device(device).type
-        requested_type = overrides.get("device")
-        if requested_type is not None and requested_type != resolved_type:
-            raise ValueError(
-                f"server_args_overrides set device={requested_type!r}, but this stage "
-                f"resolved to {device!r}. Omni owns placement, so drop the override or "
-                f"set device={resolved_type!r}."
-            )
-        overrides["device"] = resolved_type
 
         server_args = sglang_backend.build_sglang_server_args(
             checkpoint_dir,
@@ -102,7 +85,6 @@ class SGLangGenerationEngineBuilder(ABC):
         )
         self.customize_server_args(server_args)
         self.validate_before_infrastructure(server_args)
-        infra_kwargs = dict(self.infra_kwargs())
         infra_kwargs = dict(self.infra_kwargs())
         if self.kv_cache_bytes is not None:
             infra_kwargs.setdefault("kv_cache_bytes", self.kv_cache_bytes)

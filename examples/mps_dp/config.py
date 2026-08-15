@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -85,6 +86,7 @@ def _resolve_mps_memory_budget(
     replicas: int,
     *,
     allow_missing_budget: bool,
+    weight_share: bool = False,
 ) -> dict[str, int | str] | None:
     if replicas <= 0:
         raise ValueError("replicas must be a positive integer")
@@ -115,15 +117,32 @@ def _resolve_mps_memory_budget(
         )
 
     total_memory_bytes = device_info.total_memory_bytes
+    # An omitted total_reserve_bytes is an even split of the card, not the whole
+    # card. Charging every replica the full VRAM made any kv-only config fail
+    # preflight at replicas >= 2 while quoting a reservation the user never set.
+    total_reserve_declared = total_reserve_bytes is not None
     if total_reserve_bytes is None:
-        total_reserve_bytes = total_memory_bytes
+        total_reserve_bytes = total_memory_bytes // replicas
     if kv_cache_bytes > total_reserve_bytes:
+        if total_reserve_declared:
+            raise ValueError(
+                f"{config_type.__name__} generation stage {stage.name!r} declares "
+                "runtime.memory.kv_cache_bytes greater than "
+                "runtime.memory.total_reserve_bytes"
+            )
         raise ValueError(
             f"{config_type.__name__} generation stage {stage.name!r} declares "
-            "runtime.memory.kv_cache_bytes greater than "
-            "runtime.memory.total_reserve_bytes"
+            f"runtime.memory.kv_cache_bytes ({format_bytes_gib(kv_cache_bytes)}) "
+            f"greater than the {replicas}-way even split of GPU {gpu_id} "
+            f"({format_bytes_gib(total_reserve_bytes)}). Lower kv_cache_bytes, "
+            "reduce the replica count, or set runtime.memory.total_reserve_bytes "
+            "explicitly."
         )
-    requested_total_bytes = replicas * total_reserve_bytes
+
+    if weight_share:
+        requested_total_bytes = total_reserve_bytes
+    else:
+        requested_total_bytes = replicas * total_reserve_bytes
     budget: dict[str, int | str] = {
         "gpu_id": gpu_id,
         "gpu_name": device_info.name or "unknown GPU",
@@ -131,10 +150,14 @@ def _resolve_mps_memory_budget(
             "unknown" if device_info.device_id is None else device_info.device_id
         ),
         "replicas": replicas,
+        "weight_share": "1" if weight_share else "0",
         "per_replica_kv_cache_bytes": kv_cache_bytes,
         "per_replica_kv_cache_gib": format_bytes_gib(kv_cache_bytes),
         "per_replica_total_reserve_bytes": total_reserve_bytes,
         "per_replica_total_reserve_gib": format_bytes_gib(total_reserve_bytes),
+        "per_replica_total_reserve_source": (
+            "config" if total_reserve_declared else "even-split-default"
+        ),
         "requested_total_bytes": requested_total_bytes,
         "requested_total_gib": format_bytes_gib(requested_total_bytes),
         "available_total_bytes": total_memory_bytes,
@@ -142,6 +165,16 @@ def _resolve_mps_memory_budget(
     }
     if requested_total_bytes > total_memory_bytes:
         raise ValueError(_format_mps_memory_budget_error(budget))
+    if weight_share:
+        print(
+            "warning: WEIGHT_SHARE=1 - MPS byte-budget preflight only checked "
+            f"one replica's reservation ({budget['per_replica_total_reserve_gib']}) "
+            f"against GPU {gpu_id} VRAM ({budget['available_total_gib']}). The "
+            f"{replicas}-way total is NOT validated, because the shared weight "
+            "size is unknown until a replica boots. Use autodp.sh to size "
+            "shared-weight DP from a measured footprint.",
+            file=sys.stderr,
+        )
     return budget
 
 
@@ -149,6 +182,8 @@ def resolve_mps_memory_budget(
     config_path: str | Path,
     gpu_id: int,
     replicas: int,
+    *,
+    weight_share: bool = False,
 ) -> dict[str, int | str]:
     """Return the arithmetic inputs for MPS byte-budget preflight."""
 
@@ -157,6 +192,7 @@ def resolve_mps_memory_budget(
         gpu_id,
         replicas,
         allow_missing_budget=False,
+        weight_share=weight_share,
     )
     assert budget is not None
     return budget
@@ -248,6 +284,7 @@ def main() -> None:
                 gpu_id=args.gpu_id,
                 replicas=args.replicas,
                 allow_missing_budget=True,
+                weight_share=args.weight_share,
             )
             if budget is not None:
                 print(_serialize_mps_memory_budget_manifest(budget))
