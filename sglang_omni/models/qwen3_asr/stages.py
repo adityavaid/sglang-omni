@@ -9,7 +9,8 @@ from typing import Any
 def create_sglang_qwen3_asr_executor(
     model_path: str,
     *,
-    device: str = "cuda:0",
+    device: str | None = None,
+    gpu_id: int | None = None,
     kv_cache_bytes: int | None = None,
     dtype: str = "auto",
     max_running_requests: int = 64,

@@ -38,45 +38,8 @@ def create_sglang_arkasr_executor(
 
     return ArkasrEngineBuilder(
         max_running_requests=max_running_requests,
-        server_args_overrides=server_args_overrides,
-        **defaults,
-    )
-
-    server_args = build_sglang_server_args(
-        model_path,
-        context_length=encoder_token_count + int(max_new_tokens) + 8,
-        **overrides,
-    )
-    validate_generation_batch_policy(model_name="ARK-ASR", server_args=server_args)
-
-    want_cuda_graph, (
-        model_worker,
-        tree_cache,
-        req_to_token_pool,
-        token_to_kv_pool_allocator,
-        prefill_mgr,
-        decode_mgr,
-        model_config,
-    ) = create_sglang_infrastructure_defer_cuda_graph(
-        server_args,
-        gpu_id,
-        model_arch_override="ArkasrForConditionalGeneration",
+        encoder_max_batch_size=encoder_max_batch_size,
         kv_cache_bytes=kv_cache_bytes,
-    )
-
-    if want_cuda_graph:
-        model_worker.model_runner.init_cuda_graphs()
-
-    init_mm_embedding_cache(mm_embedding_cache_size_bytes)
-
-    output_proc = SGLangOutputProcessor(
-        capture_hidden=False,
-        capture_hidden_layers=None,
-        model=model_worker.model_runner.model,
-    )
-    request_builder, result_adapter = make_arkasr_scheduler_adapters(
-        tokenizer=tokenizer,
-        feature_extractor=feature_extractor,
         max_new_tokens=max_new_tokens,
         enable_async_decode=enable_async_decode,
         async_decode_min_batch_size=async_decode_min_batch_size,

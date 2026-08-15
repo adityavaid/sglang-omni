@@ -18,7 +18,7 @@ from sglang_omni.config.schema import (
 )
 from sglang_omni.model_runner import _hidden_capture as hidden_capture_module
 from sglang_omni.model_runner import model_worker as model_worker_module
-from sglang_omni.scheduling import bootstrap
+from sglang_omni.scheduling import bootstrap, sglang_backend
 from tests.unit_test.fakes import FakeServerArgs
 
 
