@@ -35,9 +35,27 @@ class ArkasrEngineBuilder(AsrEngineBuilder):
         mm_attention_backend: str | None,
         request_build_max_workers: int,
         request_build_max_pending: int | None,
+        enable_pre_lm_encoder: bool = True,
+        pre_lm_cache_max_entries: int = 4096,
+        pre_lm_cache_size_bytes: int = 2 * 1024**3,
+        pre_lm_max_batch_size: int = 8,
+        pre_lm_max_batch_wait_ms: int = 0,
+        pre_lm_max_pending: int = 32,
         kv_cache_bytes: int | None = None,
     ) -> None:
         super().__init__(kv_cache_bytes=kv_cache_bytes)
+        if pre_lm_max_batch_size < 1:
+            raise ValueError(
+                f"pre_lm_max_batch_size must be >= 1, got {pre_lm_max_batch_size}"
+            )
+        if pre_lm_max_batch_wait_ms < 0:
+            raise ValueError(
+                f"pre_lm_max_batch_wait_ms must be >= 0, got {pre_lm_max_batch_wait_ms}"
+            )
+        if pre_lm_max_pending < 1:
+            raise ValueError(
+                f"pre_lm_max_pending must be >= 1, got {pre_lm_max_pending}"
+            )
         self.max_running_requests = max_running_requests
         self.encoder_max_batch_size = encoder_max_batch_size
         self.max_new_tokens = int(max_new_tokens)
