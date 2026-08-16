@@ -91,7 +91,9 @@ def _resolve_mps_memory_budget(
     if replicas <= 0:
         raise ValueError("replicas must be a positive integer")
 
-    _, config_type, stage = _resolve_generation_stage(config_path)
+    _, config_type, stage = _resolve_generation_stage(
+        config_path, weight_share=weight_share
+    )
     kv_cache_bytes = stage.runtime.memory.kv_cache_bytes
     total_reserve_bytes = stage.runtime.memory.total_reserve_bytes
     if kv_cache_bytes is None:
