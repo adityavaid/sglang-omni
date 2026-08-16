@@ -76,6 +76,7 @@ def create_thinker_scheduler(
             model_arch_override="Qwen3OmniThinkerForCausalLM",
             capture_hidden_layers=capture_hidden_layers,
             total_gpu_memory_fraction=total_gpu_memory_fraction,
+            kv_cache_bytes=kv_cache_bytes,
             defer_cuda_graph_capture=defer_cuda_graph_capture,
             enable_prefill_input_embeds=enable_prefill_input_embeds,
         )
@@ -96,18 +97,7 @@ def create_thinker_scheduler(
         prefill_mgr,
         decode_mgr,
         model_config,
-    ) = create_sglang_infrastructure(
-        server_args,
-        gpu_id,
-        tp_rank=tp_rank,
-        nccl_port=nccl_port,
-        model_arch_override="Qwen3OmniThinkerForCausalLM",
-        capture_hidden_layers=capture_hidden_layers,
-        total_gpu_memory_fraction=total_gpu_memory_fraction,
-        kv_cache_bytes=kv_cache_bytes,
-        defer_cuda_graph_capture=defer_cuda_graph_capture,
-        enable_prefill_input_embeds=enable_prefill_input_embeds,
-    )
+    ) = infrastructure
 
     if defer_cuda_graph_capture:
         model_worker.model_runner.init_cuda_graphs()
