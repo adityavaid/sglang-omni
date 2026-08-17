@@ -42,9 +42,12 @@ class SGLangGenerationEngineBuilder(ABC):
     # Set True only by builders whose model has adopted the breakable prefill
     # CUDA graph contract; a deployment override cannot enable it otherwise.
     supports_breakable_prefill_cuda_graph: bool = False
+    # Class-level default so a subclass whose ``__init__`` does not chain to
+    # ``super()`` still builds instead of raising AttributeError in build().
+    kv_cache_bytes: int | None = None
 
     def __init__(self, *, kv_cache_bytes: int | None = None) -> None:
-        self.kv_cache_bytes: int | None = kv_cache_bytes
+        self.kv_cache_bytes = kv_cache_bytes
 
     def build(
         self,

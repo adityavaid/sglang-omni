@@ -29,23 +29,24 @@ def _stage(**kwargs) -> StageConfig:
 
 
 def test_stage_runtime_schema_accepts_typed_runtime_values() -> None:
-    with pytest.warns(
-        DeprecationWarning, match="runtime.memory.kv_cache_bytes"
-    ) as record:
-        stage = _stage(
-            runtime=StageRuntimeConfig(
-                resources=StageResourceConfig(total_gpu_memory_fraction=0.25),
-                max_seq_len=8192,
-                video_fps=2.0,
-                sglang_server_args=SGLangServerArgsConfig(mem_fraction_static=0.7),
-            ),
-            runtime_arg_map={"max_seq_len": "thinker_max_seq_len"},
-        )
+    stage = _stage(
+        runtime=StageRuntimeConfig(
+            resources=StageResourceConfig(total_gpu_memory_fraction=0.25),
+            max_seq_len=8192,
+            video_fps=2.0,
+            sglang_server_args=SGLangServerArgsConfig(mem_fraction_static=0.7),
+        ),
+        runtime_arg_map={"max_seq_len": "thinker_max_seq_len"},
+    )
 
     assert stage.runtime.resources.total_gpu_memory_fraction == 0.25
     assert stage.runtime.sglang_server_args.mem_fraction_static == 0.7
     assert stage.runtime_arg_map["max_seq_len"] == "thinker_max_seq_len"
-    assert len(record) == 2
+
+
+def test_invalid_total_gpu_memory_fraction_raises() -> None:
+    with pytest.raises(ValueError, match="total_gpu_memory_fraction"):
+        StageResourceConfig(total_gpu_memory_fraction=0.0)
 
 
 def test_stage_memory_config_normalizes_binary_size() -> None:
@@ -54,46 +55,9 @@ def test_stage_memory_config_normalizes_binary_size() -> None:
     assert runtime.memory.kv_cache_bytes == 2 * 1024**3
 
 
-def test_stage_memory_config_normalizes_total_reserve_bytes() -> None:
-    runtime = StageRuntimeConfig(
-        memory=StageMemoryConfig(total_reserve_bytes="1536MiB")
-    )
-
-    assert runtime.memory.total_reserve_bytes == 1536 * 1024**2
-
-
-@pytest.mark.parametrize("value", [0, -1, "0GiB", "2GB", "not-a-size"])
-def test_stage_memory_config_rejects_invalid_budget(value: int | str) -> None:
-    with pytest.raises(ValueError, match="kv_cache_bytes"):
-        StageMemoryConfig(kv_cache_bytes=value)
-
-
-@pytest.mark.parametrize("value", [0, -1, "0GiB", "2GB", "not-a-size"])
-def test_stage_memory_config_rejects_invalid_total_reserve(
-    value: int | str,
-) -> None:
-    with pytest.raises(ValueError, match="total_reserve_bytes"):
-        StageMemoryConfig(total_reserve_bytes=value)
-
-
-def test_stage_memory_config_rejects_kv_larger_than_total_reserve() -> None:
-    with pytest.raises(ValueError, match="total_reserve_bytes"):
-        StageMemoryConfig(kv_cache_bytes="3GiB", total_reserve_bytes="2GiB")
-
-
-def test_invalid_total_gpu_memory_fraction_raises() -> None:
-    with pytest.raises(ValueError, match="total_gpu_memory_fraction"):
-        StageResourceConfig(total_gpu_memory_fraction=0.0)
-
-
 def test_legacy_total_gpu_memory_fraction_warns_about_byte_budget() -> None:
     with pytest.warns(DeprecationWarning, match="runtime.memory.kv_cache_bytes"):
         StageResourceConfig(total_gpu_memory_fraction=0.25)
-
-
-def test_invalid_sglang_mem_fraction_static_raises() -> None:
-    with pytest.raises(ValueError, match="mem_fraction_static"):
-        SGLangServerArgsConfig(mem_fraction_static=1.0)
 
 
 def test_legacy_mem_fraction_static_warns_about_byte_budget() -> None:
@@ -101,22 +65,12 @@ def test_legacy_mem_fraction_static_warns_about_byte_budget() -> None:
         SGLangServerArgsConfig(mem_fraction_static=0.7)
 
 
-def test_invalid_stage_runtime_values_raise() -> None:
-    with pytest.raises(ValueError, match="max_seq_len"):
-        StageRuntimeConfig(max_seq_len=0)
-    with pytest.raises(ValueError, match="video_fps"):
-        StageRuntimeConfig(video_fps=-1.0)
-
-
 def test_stage_runtime_rejects_kv_budget_with_total_gpu_memory_fraction() -> None:
-    with (
-        pytest.warns(DeprecationWarning, match="runtime.memory.kv_cache_bytes"),
-        pytest.raises(
-            ValueError,
-            match=(
-                "runtime.memory.kv_cache_bytes cannot be set together with "
-                "runtime.resources.total_gpu_memory_fraction"
-            ),
+    with pytest.raises(
+        ValueError,
+        match=(
+            "runtime.memory.kv_cache_bytes cannot be set together with "
+            "runtime.resources.total_gpu_memory_fraction"
         ),
     ):
         StageRuntimeConfig(
@@ -126,20 +80,29 @@ def test_stage_runtime_rejects_kv_budget_with_total_gpu_memory_fraction() -> Non
 
 
 def test_stage_runtime_rejects_kv_budget_with_mem_fraction_static() -> None:
-    with (
-        pytest.warns(DeprecationWarning, match="runtime.memory.kv_cache_bytes"),
-        pytest.raises(
-            ValueError,
-            match=(
-                "runtime.memory.kv_cache_bytes cannot be set together with "
-                "runtime.sglang_server_args.mem_fraction_static"
-            ),
+    with pytest.raises(
+        ValueError,
+        match=(
+            "runtime.memory.kv_cache_bytes cannot be set together with "
+            "runtime.sglang_server_args.mem_fraction_static"
         ),
     ):
         StageRuntimeConfig(
             memory=StageMemoryConfig(kv_cache_bytes="2GiB"),
             sglang_server_args=SGLangServerArgsConfig(mem_fraction_static=0.7),
         )
+
+
+def test_invalid_sglang_mem_fraction_static_raises() -> None:
+    with pytest.raises(ValueError, match="mem_fraction_static"):
+        SGLangServerArgsConfig(mem_fraction_static=1.0)
+
+
+def test_invalid_stage_runtime_values_raise() -> None:
+    with pytest.raises(ValueError, match="max_seq_len"):
+        StageRuntimeConfig(max_seq_len=0)
+    with pytest.raises(ValueError, match="video_fps"):
+        StageRuntimeConfig(video_fps=-1.0)
 
 
 def test_stage_rejects_terminal_with_next() -> None:

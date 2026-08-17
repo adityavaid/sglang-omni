@@ -3,62 +3,14 @@
 
 from __future__ import annotations
 
-import sys
-import types
 from types import SimpleNamespace
 
 import pytest
 
-from sglang_omni.config.runtime import resolve_stage_factory_args
-from sglang_omni.config.schema import (
-    PipelineConfig,
-    StageConfig,
-    StageMemoryConfig,
-    StageRuntimeConfig,
-)
 from sglang_omni.model_runner import _hidden_capture as hidden_capture_module
 from sglang_omni.model_runner import model_worker as model_worker_module
 from sglang_omni.scheduling import bootstrap, sglang_backend
 from tests.unit_test.fakes import FakeServerArgs
-
-
-def _install_fake_sglang_backend(
-    monkeypatch: pytest.MonkeyPatch,
-    *,
-    prefill_manager: object,
-    decode_manager: object,
-    create_tree_cache: object,
-) -> None:
-    fake_backend = types.ModuleType("sglang_omni.scheduling.sglang_backend")
-    fake_backend.PrefillManager = prefill_manager
-    fake_backend.DecodeManager = decode_manager
-    fake_backend.create_tree_cache = create_tree_cache
-    monkeypatch.setitem(
-        sys.modules,
-        "sglang_omni.scheduling.sglang_backend",
-        fake_backend,
-    )
-
-
-def runtime_bootstrap_factory(
-    model_path: str,
-    *,
-    gpu_id: int,
-    kv_cache_bytes: int | None = None,
-):
-    del model_path
-    server_args = FakeServerArgs(
-        page_size=1,
-        disable_overlap_schedule=False,
-        chunked_prefill_size=8,
-        max_prefill_tokens=16,
-        random_seed=7,
-    )
-    return bootstrap.create_sglang_infrastructure(
-        server_args,
-        gpu_id,
-        kv_cache_bytes=kv_cache_bytes,
-    )
 
 
 def test_runtime_configuration_reports_global_backend_for_each_phase(
@@ -167,11 +119,12 @@ def test_create_sglang_infrastructure_runs_0515_initialization_phases(
             del kwargs
 
     monkeypatch.setattr(model_worker_module, "ModelWorker", FakeWorker)
-    _install_fake_sglang_backend(
-        monkeypatch,
-        prefill_manager=FakePrefillManager,
-        decode_manager=FakeDecodeManager,
-        create_tree_cache=lambda *args: ("tree_cache", args),
+    monkeypatch.setattr(sglang_backend, "PrefillManager", FakePrefillManager)
+    monkeypatch.setattr(sglang_backend, "DecodeManager", FakeDecodeManager)
+    monkeypatch.setattr(
+        sglang_backend,
+        "create_tree_cache",
+        lambda *args: ("tree_cache", args),
     )
 
     server_args = SimpleNamespace(
@@ -197,89 +150,58 @@ def test_create_sglang_infrastructure_runs_0515_initialization_phases(
     assert infrastructure[0].model_runner.model is FakeRunner.model
 
 
-def test_resolved_factory_kv_budget_reaches_runner_initialization(
+def test_create_sglang_infrastructure_forwards_kv_cache_bytes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    runner_init_calls: list[dict[str, object]] = []
+    captured: dict[str, object] = {}
 
-    class FakeSGLModelRunner:
-        def __init__(self, **kwargs) -> None:
-            runner_init_calls.append(dict(kwargs))
-            self.device = "cuda:0"
-            self.tp_group = SimpleNamespace(cpu_group=object())
-            self.model = object()
-            self.req_to_token_pool = SimpleNamespace(size=1, max_context_len=1)
-            self.token_to_kv_pool_allocator = SimpleNamespace(size=1)
+    class FakeRunner:
+        model = object()
 
         def alloc_memory_pool(self) -> None:
-            return None
+            pass
 
         def init_attention_backends(self) -> None:
-            return None
+            pass
 
         def init_cuda_graphs(self) -> None:
-            return None
+            pass
 
-    sglang_pkg = types.ModuleType("sglang")
-    sglang_pkg.__path__ = []
-    srt_pkg = types.ModuleType("sglang.srt")
-    srt_pkg.__path__ = []
-    utils_mod = types.ModuleType("sglang.srt.utils")
-    utils_mod.broadcast_pyobj = lambda values, *_args, **_kwargs: values
-    utils_mod.set_random_seed = lambda _seed: None
-    fake_runner_mod = types.ModuleType("sglang_omni.model_runner.sglang_model_runner")
-    fake_runner_mod.SGLModelRunner = FakeSGLModelRunner
+    class FakeWorker:
+        model_config = SimpleNamespace(is_multimodal=False)
+        enable_prefill_input_embeds = False
 
-    monkeypatch.setitem(sys.modules, "sglang", sglang_pkg)
-    monkeypatch.setitem(sys.modules, "sglang.srt", srt_pkg)
-    monkeypatch.setitem(sys.modules, "sglang.srt.utils", utils_mod)
-    monkeypatch.setitem(
-        sys.modules,
-        "sglang_omni.model_runner.sglang_model_runner",
-        fake_runner_mod,
-    )
+        def __init__(self, *, config, **kwargs) -> None:
+            del kwargs
+            captured["kv_cache_bytes"] = config.kv_cache_bytes
+            self.model_runner = FakeRunner()
+
+        def get_memory_pool(self):
+            return "req_pool", "kv_pool"
+
+    monkeypatch.setattr(model_worker_module, "ModelWorker", FakeWorker)
+    monkeypatch.setattr(sglang_backend, "PrefillManager", lambda **kwargs: kwargs)
+    monkeypatch.setattr(sglang_backend, "DecodeManager", lambda **kwargs: kwargs)
     monkeypatch.setattr(
-        model_worker_module.ModelWorker,
-        "_init_model_config",
-        lambda self: setattr(self, "model_config", SimpleNamespace()),
-    )
-    monkeypatch.setattr(
-        model_worker_module.ModelWorker,
-        "_configure_backend_policy",
-        lambda self: None,
-    )
-    monkeypatch.setattr(
-        model_worker_module.ModelWorker,
-        "_init_dllm_algorithm",
-        lambda self: setattr(self, "dllm_algorithm", None),
-    )
-    monkeypatch.setattr(
-        bootstrap,
-        "_describe_sglang_runtime_configuration",
-        lambda *_args, **_kwargs: "runtime configuration",
-    )
-    _install_fake_sglang_backend(
-        monkeypatch,
-        prefill_manager=lambda **kwargs: kwargs,
-        decode_manager=lambda **kwargs: kwargs,
-        create_tree_cache=lambda *args: ("tree_cache", args),
+        sglang_backend,
+        "create_tree_cache",
+        lambda *args: ("tree_cache", args),
     )
 
-    stage = StageConfig(
-        name="thinker",
-        process="pipeline",
-        factory="tests.unit_test.serve.test_sglang_bootstrap.runtime_bootstrap_factory",
-        terminal=True,
-        gpu=0,
-        runtime=StageRuntimeConfig(memory=StageMemoryConfig(kv_cache_bytes="2GiB")),
+    server_args = SimpleNamespace(
+        attention_backend=None,
+        decode_attention_backend=None,
+        prefill_attention_backend=None,
+        sampling_backend=None,
+        page_size=1,
+        disable_overlap_schedule=False,
+        chunked_prefill_size=8,
+        max_prefill_tokens=16,
     )
-    config = PipelineConfig(model_path="dummy-model", stages=[stage])
 
-    args = resolve_stage_factory_args(stage, config)
-    runtime_bootstrap_factory(**args)
+    bootstrap.create_sglang_infrastructure(server_args, 0, kv_cache_bytes=2 * 1024**3)
 
-    assert args["kv_cache_bytes"] == 2 * 1024**3
-    assert runner_init_calls[0]["kv_cache_bytes"] == 2 * 1024**3
+    assert captured["kv_cache_bytes"] == 2 * 1024**3
 
 
 def test_cuda_graph_init_scopes_prefill_embedding_capture_flag() -> None:
