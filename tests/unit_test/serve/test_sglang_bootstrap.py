@@ -155,6 +155,12 @@ def test_create_sglang_infrastructure_forwards_kv_cache_bytes(
 ) -> None:
     captured: dict[str, object] = {}
 
+    monkeypatch.setattr(
+        bootstrap,
+        "_describe_sglang_runtime_configuration",
+        lambda _server_args, _gpu_id: "runtime configuration",
+    )
+
     class FakeRunner:
         model = object()
 
