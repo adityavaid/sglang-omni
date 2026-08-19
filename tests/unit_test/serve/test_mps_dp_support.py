@@ -170,25 +170,32 @@ def test_budget_rejects_replica_total_over_physical_vram(tmp_path, gpu_with_16gi
         mps_dp_config.resolve_mps_memory_budget(yaml_path, gpu_id=0, replicas=2)
 
 
-def test_omitted_total_reserve_defaults_to_even_split(tmp_path, gpu_with_16gib):
+def test_omitted_reserve_passes_kv_bound_and_warns_for_dp(
+    tmp_path, gpu_with_16gib, capsys
+):
     yaml_path = _write_budget_yaml(tmp_path, kv_cache_bytes="6GiB")
 
     budget = mps_dp_config.resolve_mps_memory_budget(yaml_path, gpu_id=0, replicas=2)
 
-    assert budget["per_replica_total_reserve_bytes"] == 8 * 1024**3
-    assert budget["per_replica_total_reserve_source"] == "even-split-default"
-    assert budget["requested_total_bytes"] == 16 * 1024**3
+    assert budget["total_kv_cache_bytes"] == 12 * 1024**3
+    assert "requested_total_bytes" not in budget
+    err = capsys.readouterr().err
+    assert "NOT validated" in err
+    assert "8.00GiB" in err
 
 
-def test_omitted_total_reserve_rejects_kv_larger_than_even_split(
-    tmp_path, gpu_with_16gib
-):
-    yaml_path = _write_budget_yaml(tmp_path, kv_cache_bytes="10GiB")
-    with pytest.raises(ValueError, match="2-way even split"):
+def test_kv_error_only_cites_user_written_numbers(tmp_path, gpu_with_16gib):
+    yaml_path = _write_budget_yaml(tmp_path, kv_cache_bytes="9GiB")
+    with pytest.raises(ValueError) as exc_info:
         mps_dp_config.resolve_mps_memory_budget(yaml_path, gpu_id=0, replicas=2)
+    message = str(exc_info.value)
+    assert "total_reserve_bytes" not in message
+    assert "even split" not in message
 
 
-def test_weight_share_budget_checks_one_replica_only(tmp_path, gpu_with_16gib, capsys):
+def test_weight_share_budget_skips_reserve_total_check(
+    tmp_path, gpu_with_16gib, capsys
+):
     yaml_path = _write_budget_yaml(
         tmp_path, kv_cache_bytes="6GiB", total_reserve_bytes="9GiB"
     )
@@ -197,7 +204,8 @@ def test_weight_share_budget_checks_one_replica_only(tmp_path, gpu_with_16gib, c
         yaml_path, gpu_id=0, replicas=2, weight_share=True
     )
 
-    assert budget["requested_total_bytes"] == 9 * 1024**3
+    assert budget["per_replica_total_reserve_bytes"] == 9 * 1024**3
+    assert "requested_total_bytes" not in budget
     assert "2-way total is NOT validated" in capsys.readouterr().err
 
 

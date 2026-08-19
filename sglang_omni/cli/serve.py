@@ -414,6 +414,18 @@ def apply_encoder_mem_reserve_cli_override(
             "--mem-fraction-static and --thinker-mem-fraction-static"
         )
 
+    # Note (Jiaxin Deng): the reserve adjusts mem_fraction_static, which a byte
+    # budget ignores; accepting it would be a silent no-op.
+    conflicting = _find_stages_with_kv_cache_bytes(
+        pipeline_config, stage_name=thinker_stage
+    )
+    if conflicting:
+        raise typer.BadParameter(
+            "--encoder-mem-reserve cannot be combined with "
+            "runtime.memory.kv_cache_bytes, which is set on stage(s) "
+            f"{', '.join(sorted(conflicting))}."
+        )
+
     matching_stages = _find_matching_stages(
         pipeline_config,
         stage_name=thinker_stage,

@@ -96,86 +96,100 @@ def _resolve_mps_memory_budget(
     )
     kv_cache_bytes = stage.runtime.memory.kv_cache_bytes
     total_reserve_bytes = stage.runtime.memory.total_reserve_bytes
-    if kv_cache_bytes is None:
-        if allow_missing_budget:
-            return None
+    if kv_cache_bytes is None and not allow_missing_budget:
         raise ValueError(
             f"{config_type.__name__} generation stage {stage.name!r} must define "
             "positive runtime.memory.kv_cache_bytes for MPS byte-budget preflight"
         )
 
-    if kv_cache_bytes <= 0:
-        raise ValueError(
-            f"{config_type.__name__} generation stage {stage.name!r} must define a "
-            "positive runtime.memory.kv_cache_bytes for MPS byte-budget preflight"
-        )
+    if kv_cache_bytes is None and total_reserve_bytes is None:
+        return None
 
     device_info = get_gpu_device_info(gpu_id)
     if device_info.total_memory_bytes is None:
         name = device_info.name or "unknown GPU"
         raise ValueError(
             f"GPU {gpu_id} ({name}) total VRAM metadata is unavailable; cannot "
-            "preflight runtime.memory.kv_cache_bytes"
+            "preflight runtime.memory byte budgets"
         )
-
     total_memory_bytes = device_info.total_memory_bytes
-    # An omitted total_reserve_bytes is an even split of the card, not the whole
-    # card. Charging every replica the full VRAM made any kv-only config fail
-    # preflight at replicas >= 2 while quoting a reservation the user never set.
-    total_reserve_declared = total_reserve_bytes is not None
-    if total_reserve_bytes is None:
-        total_reserve_bytes = total_memory_bytes // replicas
-    if kv_cache_bytes > total_reserve_bytes:
-        if total_reserve_declared:
-            raise ValueError(
-                f"{config_type.__name__} generation stage {stage.name!r} declares "
-                "runtime.memory.kv_cache_bytes greater than "
-                "runtime.memory.total_reserve_bytes"
-            )
-        raise ValueError(
-            f"{config_type.__name__} generation stage {stage.name!r} declares "
-            f"runtime.memory.kv_cache_bytes ({format_bytes_gib(kv_cache_bytes)}) "
-            f"greater than the {replicas}-way even split of GPU {gpu_id} "
-            f"({format_bytes_gib(total_reserve_bytes)}). Lower kv_cache_bytes, "
-            "reduce the replica count, or set runtime.memory.total_reserve_bytes "
-            "explicitly."
-        )
-
-    if weight_share:
-        requested_total_bytes = total_reserve_bytes
-    else:
-        requested_total_bytes = replicas * total_reserve_bytes
+    gpu_name = device_info.name or "unknown GPU"
     budget: dict[str, int | str] = {
         "gpu_id": gpu_id,
-        "gpu_name": device_info.name or "unknown GPU",
+        "gpu_name": gpu_name,
         "gpu_device_id": (
             "unknown" if device_info.device_id is None else device_info.device_id
         ),
         "replicas": replicas,
         "weight_share": "1" if weight_share else "0",
-        "per_replica_kv_cache_bytes": kv_cache_bytes,
-        "per_replica_kv_cache_gib": format_bytes_gib(kv_cache_bytes),
-        "per_replica_total_reserve_bytes": total_reserve_bytes,
-        "per_replica_total_reserve_gib": format_bytes_gib(total_reserve_bytes),
-        "per_replica_total_reserve_source": (
-            "config" if total_reserve_declared else "even-split-default"
-        ),
-        "requested_total_bytes": requested_total_bytes,
-        "requested_total_gib": format_bytes_gib(requested_total_bytes),
-        "available_total_bytes": total_memory_bytes,
-        "available_total_gib": format_bytes_gib(total_memory_bytes),
+        "total_vram_bytes": total_memory_bytes,
+        "total_vram_gib": format_bytes_gib(total_memory_bytes),
     }
-    if requested_total_bytes > total_memory_bytes:
-        raise ValueError(_format_mps_memory_budget_error(budget))
+
+    if kv_cache_bytes is not None:
+        total_kv_bytes = replicas * kv_cache_bytes
+        if total_kv_bytes > total_memory_bytes:
+            raise ValueError(
+                "MPS byte-budget preflight exceeds physical VRAM: "
+                f"GPU {gpu_id} ({gpu_name}) has "
+                f"{format_bytes_gib(total_memory_bytes)}, but {replicas} "
+                f"replicas x kv_cache_bytes={format_bytes_gib(kv_cache_bytes)} "
+                f"= {format_bytes_gib(total_kv_bytes)} of KV pools alone. Lower "
+                "runtime.memory.kv_cache_bytes or reduce the replica count."
+            )
+        budget["per_replica_kv_cache_bytes"] = kv_cache_bytes
+        budget["per_replica_kv_cache_gib"] = format_bytes_gib(kv_cache_bytes)
+        budget["total_kv_cache_bytes"] = total_kv_bytes
+        budget["total_kv_cache_gib"] = format_bytes_gib(total_kv_bytes)
+
+    if total_reserve_bytes is None:
+        if replicas >= 2:
+            even_split = total_memory_bytes // replicas
+            print(
+                "warning: runtime.memory.total_reserve_bytes is not set; the "
+                f"{replicas}-replica total footprint (weights, activations, CUDA "
+                "graphs) is NOT validated, only the KV pool lower bound. Size "
+                "each replica against roughly the even split of GPU "
+                f"{gpu_id} ({format_bytes_gib(even_split)}) and set "
+                "total_reserve_bytes explicitly to enable the full check.",
+                file=sys.stderr,
+            )
+        return budget
+
+    budget["per_replica_total_reserve_bytes"] = total_reserve_bytes
+    budget["per_replica_total_reserve_gib"] = format_bytes_gib(total_reserve_bytes)
     if weight_share:
+        if total_reserve_bytes > total_memory_bytes:
+            raise ValueError(
+                "MPS byte-budget preflight exceeds physical VRAM: "
+                f"GPU {gpu_id} ({gpu_name}) has {format_bytes_gib(total_memory_bytes)}, "
+                "but one replica declares total_reserve_bytes="
+                f"{format_bytes_gib(total_reserve_bytes)}. Lower "
+                "runtime.memory.total_reserve_bytes."
+            )
         print(
             "warning: WEIGHT_SHARE=1 - MPS byte-budget preflight only checked "
-            f"one replica's reservation ({budget['per_replica_total_reserve_gib']}) "
-            f"against GPU {gpu_id} VRAM ({budget['available_total_gib']}). The "
-            f"{replicas}-way total is NOT validated, because the shared weight "
-            "size is unknown until a replica boots. Use autodp.sh to size "
-            "shared-weight DP from a measured footprint.",
+            "the KV pool lower bound and one replica's reservation "
+            f"({format_bytes_gib(total_reserve_bytes)}) against GPU {gpu_id} "
+            f"VRAM ({format_bytes_gib(total_memory_bytes)}). The {replicas}-way "
+            "total is NOT validated, because the shared weight size is unknown "
+            "until a replica boots. Use autodp.sh to size shared-weight DP "
+            "from a measured footprint.",
             file=sys.stderr,
+        )
+        return budget
+
+    requested_total_bytes = replicas * total_reserve_bytes
+    budget["requested_total_bytes"] = requested_total_bytes
+    budget["requested_total_gib"] = format_bytes_gib(requested_total_bytes)
+    if requested_total_bytes > total_memory_bytes:
+        raise ValueError(
+            "MPS byte-budget preflight exceeds physical VRAM: "
+            f"GPU {gpu_id} ({gpu_name}) has {format_bytes_gib(total_memory_bytes)}, "
+            f"but {replicas} replicas x total_reserve_bytes="
+            f"{format_bytes_gib(total_reserve_bytes)} requested="
+            f"{format_bytes_gib(requested_total_bytes)}. Lower "
+            "runtime.memory.total_reserve_bytes or reduce the replica count."
         )
     return budget
 
@@ -200,41 +214,8 @@ def resolve_mps_memory_budget(
     return budget
 
 
-def _format_mps_memory_budget_error(budget: dict[str, int | str]) -> str:
-    return (
-        "MPS byte-budget preflight exceeds physical VRAM: "
-        f"GPU {budget['gpu_id']} ({budget['gpu_name']}), "
-        f"total_vram={budget['available_total_gib']}, "
-        f"replicas={budget['replicas']}, "
-        f"kv_cache_bytes={budget['per_replica_kv_cache_gib']}, "
-        f"total_reserve_bytes={budget['per_replica_total_reserve_gib']}, "
-        f"requested={budget['requested_total_gib']}, "
-        f"available={budget['available_total_gib']}"
-    )
-
-
 def _serialize_mps_memory_budget_manifest(budget: dict[str, int | str]) -> str:
-    manifest = {
-        "mps_budget_gpu_id": budget["gpu_id"],
-        "mps_budget_gpu_name": budget["gpu_name"],
-        "mps_budget_gpu_device_id": budget["gpu_device_id"],
-        "mps_budget_replicas": budget["replicas"],
-        "mps_budget_per_replica_kv_cache_bytes": budget["per_replica_kv_cache_bytes"],
-        "mps_budget_per_replica_kv_cache_gib": budget["per_replica_kv_cache_gib"],
-        "mps_budget_per_replica_total_reserve_bytes": budget[
-            "per_replica_total_reserve_bytes"
-        ],
-        "mps_budget_per_replica_total_reserve_gib": budget[
-            "per_replica_total_reserve_gib"
-        ],
-        "mps_budget_requested_total_bytes": budget["requested_total_bytes"],
-        "mps_budget_requested_total_gib": budget["requested_total_gib"],
-        "mps_budget_total_vram_bytes": budget["available_total_bytes"],
-        "mps_budget_total_vram_gib": budget["available_total_gib"],
-        "mps_budget_available_total_bytes": budget["available_total_bytes"],
-        "mps_budget_available_total_gib": budget["available_total_gib"],
-    }
-    return "\n".join(f"{key}={value}" for key, value in manifest.items())
+    return "\n".join(f"mps_budget_{key}={value}" for key, value in budget.items())
 
 
 def resolve_max_total_tokens(

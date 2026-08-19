@@ -339,6 +339,9 @@ up() {
   local mps_budget_manifest=""
   local uuid=""
   local model_path_manifest=$model
+  local run="${RUN_ID:-run-$(date +%Y%m%d-%H%M%S)-$$}"
+  [[ "$run" =~ ^run-[A-Za-z0-9_-]+$ ]] \
+    || die "RUN_ID must be a single 'run-<suffix>' path component ([A-Za-z0-9_-]), got '$run'"
   if [ -n "$config" ]; then
     [ -z "${MODEL:-}" ] || die "MODEL cannot be combined with CONFIG"
     [ -f "$config" ] || die "config file not found: $config"
@@ -422,7 +425,7 @@ up() {
     fi
   done
 
-  local node run state
+  local node state
   if [ -z "$uuid" ]; then
     uuid=$(nvidia-smi --query-gpu=uuid --format=csv,noheader -i "$gpu")
   fi
@@ -433,9 +436,6 @@ up() {
   # gpu-$gpu; a separator or traversal sequence would relocate run state into
   # another GPU's namespace (or out of STATE_ROOT) and bypass the
   # active/stale-run guards above, so restrict it to a run-* basename.
-  run="${RUN_ID:-run-$(date +%Y%m%d-%H%M%S)-$$}"
-  [[ "$run" =~ ^run-[A-Za-z0-9_-]+$ ]] \
-    || die "RUN_ID must be a single 'run-<suffix>' path component ([A-Za-z0-9_-]), got '$run'"
   state=$STATE_ROOT/gpu-$gpu/$run
   mkdir -p "$state/logs" "$state/mps/pipe" "$state/mps/log"
   : > "$state/replicas.tsv"

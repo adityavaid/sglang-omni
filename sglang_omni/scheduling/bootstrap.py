@@ -105,7 +105,6 @@ def create_sglang_infrastructure(
     weight_prefix: str | None = None,
     capture_hidden_layers: list[int] | None = None,
     total_gpu_memory_fraction: float | None = None,
-    kv_cache_bytes: int | None = None,
     defer_cuda_graph_capture: bool = False,
     enable_prefill_input_embeds: bool = False,
 ):
@@ -116,9 +115,11 @@ def create_sglang_infrastructure(
         PrefillManager,
         create_tree_cache,
     )
+    from sglang_omni.scheduling.stage_kv_budget import consume_stage_kv_cache_bytes
 
     logger.info(_describe_sglang_runtime_configuration(server_args, gpu_id))
 
+    kv_cache_bytes = consume_stage_kv_cache_bytes()
     model_worker = ModelWorker(
         config=ModelWorkerConfig(
             model_arch_override=model_arch_override,

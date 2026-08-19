@@ -10,6 +10,7 @@ import pytest
 from sglang_omni.model_runner import _hidden_capture as hidden_capture_module
 from sglang_omni.model_runner import model_worker as model_worker_module
 from sglang_omni.scheduling import bootstrap, sglang_backend
+from sglang_omni.scheduling.stage_kv_budget import stage_kv_cache_budget
 from tests.unit_test.fakes import FakeServerArgs
 
 
@@ -205,9 +206,13 @@ def test_create_sglang_infrastructure_forwards_kv_cache_bytes(
         max_prefill_tokens=16,
     )
 
-    bootstrap.create_sglang_infrastructure(server_args, 0, kv_cache_bytes=2 * 1024**3)
-
+    with stage_kv_cache_budget("thinker", 2 * 1024**3):
+        bootstrap.create_sglang_infrastructure(server_args, 0)
     assert captured["kv_cache_bytes"] == 2 * 1024**3
+
+    captured.clear()
+    bootstrap.create_sglang_infrastructure(server_args, 0)
+    assert captured["kv_cache_bytes"] is None
 
 
 def test_cuda_graph_init_scopes_prefill_embedding_capture_flag() -> None:

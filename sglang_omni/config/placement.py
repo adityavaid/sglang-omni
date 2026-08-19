@@ -8,7 +8,10 @@ from collections import defaultdict
 from dataclasses import dataclass
 from typing import Protocol
 
-from sglang_omni.config.runtime import reject_untyped_total_gpu_memory_fraction
+from sglang_omni.config.runtime import (
+    reject_untyped_memory_bytes,
+    reject_untyped_total_gpu_memory_fraction,
+)
 from sglang_omni.config.schema import PipelineConfig, StageConfig
 from sglang_omni.utils.imports import import_string
 
@@ -61,6 +64,11 @@ class StagePlacementPlanner:
 
         for stage in stages:
             reject_untyped_total_gpu_memory_fraction(
+                stage.name,
+                stage.factory_args,
+                self._config.runtime_overrides.get(stage.name, {}),
+            )
+            reject_untyped_memory_bytes(
                 stage.name,
                 stage.factory_args,
                 self._config.runtime_overrides.get(stage.name, {}),
