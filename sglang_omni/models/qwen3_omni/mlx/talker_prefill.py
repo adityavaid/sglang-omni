@@ -17,12 +17,8 @@ from sglang_omni.models.qwen3_omni.components.talker_prefill import (
     resolve_speaker_id,
 )
 from sglang_omni.models.qwen3_omni.mlx.talker import Qwen3OmniMlxTalker
-from sglang_omni.models.qwen3_omni.mlx.tensor_utils import (
-    mlx_to_torch as _mlx_to_torch,
-)
-from sglang_omni.models.qwen3_omni.mlx.tensor_utils import (
-    torch_to_mlx as _torch_to_mlx,
-)
+from sglang_omni.models.qwen3_omni.mlx.tensor_utils import mlx_to_torch as _mlx_to_torch
+from sglang_omni.models.qwen3_omni.mlx.tensor_utils import torch_to_mlx as _torch_to_mlx
 from sglang_omni.models.qwen3_omni.payload_types import Qwen3OmniPipelineState
 from sglang_omni.models.qwen3_omni.pending_text_queue import (
     PendingTextTensorQueue,

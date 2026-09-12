@@ -21,12 +21,8 @@ from sglang_omni.models.qwen3_asr.mlx.model import (
 from sglang_omni.models.qwen3_omni.mlx.common import load_qwen3_omni_mlx_component
 from sglang_omni.models.qwen3_omni.mlx.config import AudioConfig, Qwen3OmniMlxConfig
 from sglang_omni.models.qwen3_omni.mlx.runner import read_qwen3_omni_component_weights
-from sglang_omni.models.qwen3_omni.mlx.tensor_utils import (
-    mlx_to_torch as _mlx_to_torch,
-)
-from sglang_omni.models.qwen3_omni.mlx.tensor_utils import (
-    torch_to_mlx as _torch_to_mlx,
-)
+from sglang_omni.models.qwen3_omni.mlx.tensor_utils import mlx_to_torch as _mlx_to_torch
+from sglang_omni.models.qwen3_omni.mlx.tensor_utils import torch_to_mlx as _torch_to_mlx
 
 _AUDIO_PREFIXES = ("thinker.audio_tower.", "audio_tower.")
 _AUDIO_LOCAL_PREFIXES = (

@@ -2187,17 +2187,13 @@ def test_omni_scheduler_idle_batch_selection_preserves_stage_metrics(
         if mode in ("enabled", "disabled")
         else None
     )
-    reporter = SimpleNamespace(
-        reset_metrics=lambda: None, is_stats_logging_rank=False
-    )
+    reporter = SimpleNamespace(reset_metrics=lambda: None, is_stats_logging_rank=False)
     if mode != "legacy":
         reporter.scheduler_stage_metrics = recorder
     if recorder is not None:
         recorder.start(time.monotonic_ns())
 
-    scheduler = _construct_omni_scheduler(
-        monkeypatch, metrics_reporter=reporter
-    )
+    scheduler = _construct_omni_scheduler(monkeypatch, metrics_reporter=reporter)
 
     assert "scheduler_stage_metrics" in scheduler.__dict__
     assert scheduler.scheduler_stage_metrics is recorder

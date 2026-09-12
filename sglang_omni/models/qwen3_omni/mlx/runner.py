@@ -63,12 +63,8 @@ from sglang_omni.models.qwen3_omni.mlx.talker import (
 from sglang_omni.models.qwen3_omni.mlx.talker_prefill import (
     Qwen3OmniMlxTalkerPrefillBuilder,
 )
-from sglang_omni.models.qwen3_omni.mlx.tensor_utils import (
-    mlx_to_torch as _mlx_to_torch,
-)
-from sglang_omni.models.qwen3_omni.mlx.tensor_utils import (
-    torch_to_mlx as _torch_to_mlx,
-)
+from sglang_omni.models.qwen3_omni.mlx.tensor_utils import mlx_to_torch as _mlx_to_torch
+from sglang_omni.models.qwen3_omni.mlx.tensor_utils import torch_to_mlx as _torch_to_mlx
 from sglang_omni.models.qwen3_omni.mlx.thinker import (
     Qwen3OmniMlxThinker,
     merge_thinker_input_embeddings,
