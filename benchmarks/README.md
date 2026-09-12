@@ -182,6 +182,52 @@ python -m benchmarks.eval.benchmark_omni_seedtts \
 
 ## Eval Scripts
 
+### Local Qwen3-Omni MLX API benchmark
+
+With the native MLX server already listening on port 8008, run the small
+synthetic API matrix without downloading evaluation datasets:
+
+```bash
+python -m benchmarks.eval.benchmark_qwen3_omni_mlx \
+  --base-url http://127.0.0.1:8008 \
+  --model-path /path/to/complete/Qwen3-Omni-30B-A3B-Instruct-4bit \
+  --sglang-source /path/to/compatible/sglang/python \
+  --output-dir benchmarks/results/qwen3_omni_mlx_run1 \
+  --runs 5
+```
+
+Use a new output directory per run. The benchmark generates a red 224x224 image,
+a two-second red video, and a spoken "Hello" fixture using the running server.
+It covers health, short text, text SSE, a 128-token-budget text stream,
+nonstreaming and streaming text-to-speech, image/audio/video input with both
+text and speech output, and disconnect-then-recover behavior. Media use this
+server's top-level `images`, `audios`, and `videos` request fields.
+
+Each case has one separately recorded warmup and five measured requests by
+default, at concurrency 1. `results.json` retains prompts, expected substrings,
+individual timings/output text/token counts, fixture hashes, dependency/source
+provenance, and shared benchmark latency/TTFT/RTF summaries. Fixtures are saved
+beside it. Failures are recorded and cause a nonzero exit. The server's model
+and source identity are operator-supplied metadata, not remotely attested.
+
+These are **warm, repeated-input API timings**, not dataset accuracy, cold-start
+performance, isolated decode throughput, or serving-capacity measurements.
+Encoder outputs can be cached, and fixture creation warms speech before the
+per-case warmups. Percentiles from five samples are descriptive, not stable
+tail-latency estimates. Token throughput includes full request time. Speech
+RTF is full response latency divided by generated audio duration; streaming
+audio additionally reports time to first decoded WAV chunk. Cancellation
+reports the subsequent recovery request latency separately from time spent
+waiting for the cancelled request's first text delta.
+
+Speech requests have a separate 256-token talker budget; `max_tokens` limits
+thinker text, not audio generation. More than five seconds of generated audio
+for these deliberately short utterances is recorded as a failure, not a
+successful but slow request. Use `--cases text audio_to_text` to select cases
+for diagnosis, and `--timeout 30` to set the HTTP per-read timeout. Completed
+attempts are persisted immediately so an interrupted later case does not
+erase earlier failure evidence.
+
 | Script | Task | Model | API |
 |--------|------|-------|-----|
 | `eval/benchmark_tts_seedtts.py` | TTS speed + WER (unified) | e.g. S2-Pro, Voxtral, Higgs TTS | `/v1/audio/speech` |

@@ -635,6 +635,189 @@ with open("output.wav", "wb") as f:
     f.write(audio_data)
 ```
 
+<a id="apple-silicon-mlx"></a>
+## Apple Silicon (MLX)
+
+Use `mlx>=0.32.2` and `mlx-lm>=0.31.2` for the native MLX path; `mlx-vlm`
+is not required. MLX 0.32.2 adds fused attention for the vision encoder's
+72-dimensional heads. For a new environment, select the `mlx` extra through
+the [Apple installer](../get_started/installation.md#macos-apple-silicon).
+An existing compatible environment can be reused without installing anything.
+
+Qwen3-Omni runs on Apple Silicon (`arm64`) with `SGLANG_USE_MLX=1`,
+using the standard `sgl-omni serve` CLI (equivalently,
+`python -m sglang_omni.cli serve`). See the
+[Qwen3-Omni cookbook](../cookbook/qwen3_omni.md#apple-silicon-mlx)
+for installation prerequisites and supported checkpoint layouts.
+This implementation does not add a Qwen3-Omni Torch-MPS backend or fallback.
+
+### Local checkout launcher
+
+For the existing sibling-checkout layout, run from the repository root:
+
+```bash
+bash scripts/run_qwen3_omni_mlx.sh
+# Or skip speech generation:
+bash scripts/run_qwen3_omni_mlx.sh --text-only
+```
+
+The launcher uses the existing environment and checkpoint without installing
+packages or repointing editable installs. It selects native MLX, prepends this
+repository and the compatible SGLang source to `PYTHONPATH`, and defaults to
+offline Hub access and the PyAV video reader.
+
+| Override | Default |
+| --- | --- |
+| `MLX_PYTHON` | `../sglang-fork diff/.venv-mlx-dev/bin/python`, relative to this checkout |
+| `SGLANG_SOURCE` | `../sglang-core-ai/python`, relative to this checkout |
+| `MODEL_DIR` | `$HOME/models/Qwen3-Omni-30B-A3B-Instruct-4bit-93b3cbdd` |
+| `HOST` | `127.0.0.1` |
+| `PORT` | `8008` |
+
+The virtualenv's original editable SGLang source is too old for current main;
+the source override is required. The model directory must contain the full
+weights and processor assets, not just a cached configuration.
+
+### Direct CLI
+
+Set the pinned community checkpoint once:
+
+```bash
+export REPO="/path/to/sglang-omni"
+export PY="${PY:-$REPO/.venv-apple/bin/python}"
+export MODEL_DIR="$HOME/models/Qwen3-Omni-30B-A3B-Instruct-4bit-93b3cbdd"
+export MODEL_REVISION="93b3cbddd65ed4babff8f22fba491cdba7a21778"
+cd "$REPO"
+export PYTHONPATH="$REPO${SGLANG_SOURCE:+:$SGLANG_SOURCE}${PYTHONPATH:+:$PYTHONPATH}"
+export SGLANG_OMNI_VIDEO_READER=pyav
+```
+
+The PyAV video-reader override avoids TorchCodec's FFmpeg dylib requirement
+and the removed `torchvision.io.read_video` API in torchvision 0.28.
+It retains Qwen's frame sampling and resizing. The local launcher sets this
+override by default; it is opt-in for direct CLI launches and does not change
+the default GPU video path.
+
+Set `PY` to an existing virtualenv's Python before this block to reuse it.
+If its editable SGLang install is too old, also set `SGLANG_SOURCE` to a
+compatible checkout's `python/` directory; see the
+[existing-environment instructions](../get_started/installation.md#reuse-an-existing-mlx-environment-without-modifying-it).
+If the pinned checkpoint is already downloaded, keep `MODEL_DIR` pointing at
+that complete directory and **skip the download**:
+
+```bash
+export HF_HUB_OFFLINE=1
+```
+
+A Hub snapshot with only `config.json` is not a complete model: all weight
+shards and processor assets must exist. Otherwise download to the chosen
+`MODEL_DIR` with `HF_HUB_OFFLINE` unset:
+
+```bash
+"$PY" - <<'PY'
+import os
+from huggingface_hub import snapshot_download
+
+print(
+    snapshot_download(
+        repo_id="mlx-community/Qwen3-Omni-30B-A3B-Instruct-4bit",
+        revision=os.environ["MODEL_REVISION"],
+        local_dir=os.path.expanduser(os.environ["MODEL_DIR"]),
+    )
+)
+PY
+```
+
+Canonical native MLX launch (speech mode):
+
+```bash
+SGLANG_USE_MLX=1 "$PY" -m sglang_omni.cli serve \
+  --model-path "$MODEL_DIR" \
+  --host 127.0.0.1 \
+  --port 8008
+```
+
+Text-only native MLX launch:
+
+```bash
+SGLANG_USE_MLX=1 "$PY" -m sglang_omni.cli serve \
+  --model-path "$MODEL_DIR" \
+  --text-only \
+  --host 127.0.0.1 \
+  --port 8008
+```
+
+The snapshot is loaded directly, including native MLX code2wav. No checkpoint
+preparation, hybrid sidecar, or Apple-specific launcher preset is required.
+Set `HF_HUB_OFFLINE=1` to prevent Hub network access when all assets are cached.
+
+### Image and audio requests
+
+Keep `messages[].content` as text and pass media in the request's **top-level**
+`images` and `audios` arrays. Each accepts server-readable paths, URLs, or data
+URLs such as `data:image/png;base64,...` and `data:audio/wav;base64,...`.
+With the OpenAI Python client, supply these arrays through `extra_body`.
+See the image and audio examples earlier in this guide.
+
+Do **not** send OpenAI-style `image_url` or `input_audio` blocks inside
+`messages[].content` for this Qwen3-Omni pipeline. The current preprocessor
+does not interpret those blocks as media; they can be stringified as text.
+For example, use this request structure, replacing the image path as needed:
+
+```json
+{
+  "model": "qwen3-omni",
+  "messages": [{"role": "user", "content": "What color is the image?"}],
+  "images": ["image.png"],
+  "modalities": ["text"],
+  "max_tokens": 32,
+  "temperature": 0
+}
+```
+
+For transcription, put the WAV path or data URL in top-level `audios` and
+use a text instruction such as `"Transcribe the audio."`.
+
+### Runtime profile
+
+Ownership for the Apple MLX path:
+
+- native MLX: vision, audio, thinker, talker, code predictor, code2wav
+- CPU: preprocessing, token decoding
+
+Talker prefill also runs natively in MLX.
+
+The MLX runtime profile is intentionally conservative:
+
+- One Metal device (`tp_size=1`), `max_running_requests=1` — one request runs
+  at a time.
+- Greedy generation only; other sampling, penalty, and logprob combinations
+  are rejected at request time.
+- Eager execution — no radix cache, overlap, mixed prefill, chunked prefill,
+  CUDA graphs, `torch.compile`, async decode lookahead, logprobs, or partial
+  talker start.
+- SHM inter-stage transport, the same as CUDA single-node deployments.
+- Backend selection is strict: an MLX load failure is surfaced, not hidden
+  by switching model components to a different backend.
+- Native MLX does not imply radix cache, multi-request batching, or
+  CUDA-oriented optimizations.
+
+Checkpoint layouts:
+
+- **MLX** launches the downloaded pinned
+  `mlx-community/Qwen3-Omni-30B-A3B-Instruct-4bit` checkpoint directory
+  directly.
+- Other MLX-compatible 4-bit layouts may also load when they satisfy the
+  Apple checkpoint validator, but the pinned mlx-community checkpoint above is
+  the reference checkpoint for this implementation, not a production-quality
+  guarantee.
+- Validator-accepted MLX examples include component-local thinker/talker
+  shards and the root-namespaced MLX-VLM layout.
+
+Serving success alone does not establish semantic or speech quality.
+The 4-bit checkpoint still needs memory for activations, caches, and
+multimodal inputs in addition to its weights.
+
 ## Request Parameters
 
 The table below lists all parameters accepted by the `/v1/chat/completions` endpoint for Qwen3-Omni.
