@@ -524,7 +524,6 @@ def load_qwen3_omni_mlx_code2wav(model_path: str) -> Qwen3OmniMlxCode2Wav:
     if any(key.startswith(_CODE2WAV_PREFIXES) for key in weights):
         # Task 7 removes the generated dense sidecar. Until then, a converted
         # checkpoint can contain both its native root tensors and the legacy
-        # Torch sidecar; the native namespace is authoritative for MLX.
         weights = {
             key: value
             for key, value in weights.items()

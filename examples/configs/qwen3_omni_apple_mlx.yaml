@@ -3,6 +3,18 @@
 # Apple Silicon native MLX deployment profile.
 # Canonical checkpoint:
 #   mlx-community/Qwen3-Omni-30B-A3B-Instruct-4bit
+# Pinned revision:
+#   93b3cbddd65ed4babff8f22fba491cdba7a21778
+#
+# All model components, including code2wav, run in MLX; no sidecar is needed.
+# Point MODEL_DIR at an existing snapshot and override the example model path:
+#   SGLANG_USE_MLX=1 python -m sglang_omni.cli serve \
+#     --config examples/configs/qwen3_omni_apple_mlx.yaml \
+#     --model-path "$MODEL_DIR" --host 127.0.0.1 --port 8008
+# The environment variable, not this YAML, selects MLX.
+# This model_path alone does not pin or verify model content. For the strict
+# download/checksum/offline-launch recipe, see:
+#   docs/cookbook/qwen3_omni.md#strict-pinned-checkpoint-recipe
 
 config_cls: Qwen3OmniSpeechPipelineConfig
 name: qwen3-omni-apple-mlx

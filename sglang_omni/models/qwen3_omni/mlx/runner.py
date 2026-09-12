@@ -1,36 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Native MLX Qwen3-Omni thinker runner and its SGLang scheduler wiring.
-
-This module is the bridge between the reviewed native model
-(:class:`sglang_omni.models.qwen3_omni.mlx.thinker.Qwen3OmniMlxThinker`) and
-SGLang's MLX worker/scheduler surface.
-
-Design notes
-------------
-
-* **Standalone runner, not an ``MlxModelRunner`` subclass.** SGLang's generic
-  ``MlxModelRunner`` discovers attention layers by duck typing (``q_proj``,
-  ``k_proj``, ``v_proj``, ``o_proj`` *and* ``rope``) and then replaces every
-  attention module with its own batched-decode wrapper and pool-backed KV
-  caches. The Qwen3-Omni thinker has interleaved three-axis M-RoPE applied from
-  externally supplied ``[3, sequence]`` position rows, so it exposes no ``rope``
-  module and its attention cannot be driven by that wrapper. Rather than
-  half-disable the generic machinery, this runner implements exactly the
-  surface ``MlxTpModelWorker`` calls, and owns one ``mlx-lm`` KV cache list per
-  request.
-* **Apple policy.** ``apply_qwen3_omni_apple_profile`` pins
-  ``max_running_requests=1``, ``disable_radix_cache=True``,
-  ``chunked_prefill_size=-1`` and greedy sampling, so this runner requires one
-  request, refuses a radix prefix, refuses chunked continuations, and refuses
-  logit edits / logprobs rather than silently degrading.
-* **Hidden capture.** The scheduler-selected capture list arrives through
-  ``ModelWorkerConfig.capture_hidden_layers`` (``[0, 24]`` for the production
-  speech path); ``0`` maps to the model's ``"embed"`` capture and the single
-  nonzero entry is cross-checked against ``talker_config.accept_hidden_layer``.
-  Captures are carried on the pending step (never keyed by request id) so a
-  chained decode cannot overwrite its predecessor's rows, and are converted to
-  CPU Torch tensors only when the worker pops them.
-"""
+"""Native MLX Qwen3-Omni thinker runner and its SGLang scheduler wiring."""
 
 from __future__ import annotations
 
@@ -63,8 +32,12 @@ from sglang_omni.models.qwen3_omni.mlx.talker import (
 from sglang_omni.models.qwen3_omni.mlx.talker_prefill import (
     Qwen3OmniMlxTalkerPrefillBuilder,
 )
-from sglang_omni.models.qwen3_omni.mlx.tensor_utils import mlx_to_torch as _mlx_to_torch
-from sglang_omni.models.qwen3_omni.mlx.tensor_utils import torch_to_mlx as _torch_to_mlx
+from sglang_omni.models.qwen3_omni.mlx.tensor_utils import (
+    mlx_to_torch as _mlx_to_torch,
+)
+from sglang_omni.models.qwen3_omni.mlx.tensor_utils import (
+    torch_to_mlx as _torch_to_mlx,
+)
 from sglang_omni.models.qwen3_omni.mlx.thinker import (
     Qwen3OmniMlxThinker,
     merge_thinker_input_embeddings,
@@ -98,9 +71,6 @@ _THINKER_WEIGHT_PREFIXES = (
 )
 # Component-local key prefixes of an already-converted (prefix-stripped) MLX
 # checkpoint. They are deliberately ambiguous across components -- both the
-# thinker and the talker own a ``model.`` namespace -- which is exactly why a
-# converted export has to be disambiguated by *shard ownership* (see
-# :func:`read_qwen3_omni_component_weights`) and never by key text alone.
 _THINKER_LOCAL_PREFIXES = ("model.", "lm_head.")
 _TALKER_LOCAL_PREFIXES = (
     "model.",
@@ -139,30 +109,7 @@ def read_qwen3_omni_component_weights(
     official_prefixes: Sequence[str],
     local_prefixes: Sequence[str],
 ) -> dict[str, mx.array]:
-    """Collect one component's tensors, one shard at a time, by *ownership*.
-
-    Two checkpoint layouts have to be told apart, and the second is why key
-    text alone is not a safe filter:
-
-    * **Official HF layout.** Every key carries its component namespace
-      (``thinker.``/``talker.``/``code2wav.``), so ownership is unambiguous and
-      the sibling components' tensors are dropped.
-    * **Converted MLX layout.** The converter strips that namespace and puts
-      each component in its own subdirectory (``thinker/``, ``talker/``,
-      ``code2wav/``). The stripped keys collide -- the thinker and the talker
-      both own ``model.layers.*`` -- so a recursive scan that accepted
-      ``model.`` from any shard would load the *thinker's* decoder into the
-      talker (or vice versa). Ownership is therefore taken from the shard's
-      own component directory, and an unprefixed key from a foreign component
-      directory is never claimed.
-
-    A root-level unprefixed key is claimed only when the checkpoint has no
-    component directories at all (a genuinely single-component export);
-    otherwise it is ambiguous and is left alone.
-
-    Returns the raw (still component-prefixed where the source had a prefix)
-    key/value map; the model's own ``sanitize`` performs the prefix strip.
-    """
+    """Collect one component's tensors, one shard at a time, by *ownership*."""
 
     root = Path(directory)
     shards = sorted(path for path in root.rglob("*.safetensors") if path.is_file())
@@ -270,12 +217,7 @@ class Qwen3OmniThinkerMlxRunner:
         pool_size: int | None = None,
         quantization: Any = None,
     ) -> "Qwen3OmniThinkerMlxRunner":
-        """Build a runner around an already-constructed model.
-
-        Used by the worker factory's tests and by any caller that owns model
-        construction; ``__init__`` remains the production path that loads a
-        checkpoint from disk.
-        """
+        """Build a runner around an already-constructed model."""
 
         runner = cls.__new__(cls)
         runner.model_path = None
@@ -315,7 +257,6 @@ class Qwen3OmniThinkerMlxRunner:
         self._req_mrope_delta: dict[str, int] = {}
         # Prefills that have been launched but not yet committed to
         # ``_req_caches``; counted for the single-request admission check so a
-        # second request in the same extend batch is rejected at launch time.
         self._inflight_prefills: set[str] = set()
         self._req_to_token_pool: Any = None
         # Diagnostics for the most recent step; also what the unit tests read to
@@ -379,13 +320,7 @@ class Qwen3OmniThinkerMlxRunner:
 
     @staticmethod
     def _read_thinker_weights(directory: Path) -> dict[str, mx.array]:
-        """Collect the thinker text tensors, one shard at a time.
-
-        Ownership is decided by :func:`read_qwen3_omni_component_weights`, so a
-        converted export that puts each component in its own subdirectory
-        cannot leak the talker's identically named ``model.*`` keys into the
-        thinker.
-        """
+        """Collect the thinker text tensors, one shard at a time."""
 
         return read_qwen3_omni_component_weights(
             directory,
@@ -470,11 +405,7 @@ class Qwen3OmniThinkerMlxRunner:
     # -- hidden-state transport --------------------------------------------
 
     def pop_hidden_states(self, pending: Any) -> dict[Any, torch.Tensor] | None:
-        """Take this step's captures as CPU Torch tensors, once.
-
-        Captures live on the pending step, so a chained decode launched before
-        its predecessor was finalised cannot overwrite the earlier rows.
-        """
+        """Take this step's captures as CPU Torch tensors, once."""
 
         captured = getattr(pending, "_omni_hidden_states", None)
         if captured is None:
@@ -501,14 +432,7 @@ class Qwen3OmniThinkerMlxRunner:
     def _restore_placeholder_token_ids(
         self, req: Any, token_ids: list[int]
     ) -> list[int]:
-        """Map cache-key placeholder ids back to configured modality ids.
-
-        ``build_sglang_thinker_request`` substitutes a per-media hash above the
-        text vocabulary so SGLang's radix cache keys stay media-specific. Those
-        ids are not embeddable, so they are restored here using the absolute
-        positions the request builder already recorded (``_omni_mm_positions``),
-        falling back to the request's ``pad_values`` map.
-        """
+        """Map cache-key placeholder ids back to configured modality ids."""
 
         restored = [int(token_id) for token_id in token_ids]
         positions = getattr(req, "_omni_mm_positions", None)
@@ -581,13 +505,7 @@ class Qwen3OmniThinkerMlxRunner:
     def _deepstack_embeddings(
         self, req: Any, model_inputs: dict[str, Any]
     ) -> list[mx.array] | None:
-        """Prompt-ordered DeepStack rows, one ``[visual_rows, hidden]`` per layer.
-
-        Mirrors ``ThinkerModelRunner._inject_multimodal_embeds``: the visual
-        rows are the image and video placeholder positions in prompt order, so a
-        request carrying both modalities interleaves them by absolute position
-        rather than concatenating image rows ahead of video rows.
-        """
+        """Prompt-ordered DeepStack rows, one ``[visual_rows, hidden]`` per layer."""
 
         merged = model_inputs.get("deepstack_visual_embeds")
         if merged is not None:
@@ -739,12 +657,7 @@ class Qwen3OmniThinkerMlxRunner:
         return token_id
 
     def _decode_positions(self, req_id: str, cache: list[Any]) -> mx.array:
-        """M-RoPE row for the next token.
-
-        SGLang derives a decode position as ``seq_len - 1 + mrope_position_delta``
-        on all three axes; ``cache[0].offset`` is exactly that ``seq_len - 1``
-        (the tokens already resident in the cache).
-        """
+        """M-RoPE row for the next token."""
 
         position = int(cache[0].offset) + int(self._req_mrope_delta.get(req_id, 0))
         return mx.full((3, 1), position, dtype=mx.int32)
@@ -824,12 +737,7 @@ class Qwen3OmniThinkerMlxRunner:
 
 
 def make_qwen3_omni_thinker_mlx_runner_class() -> type:
-    """Return the thinker runner class once the MLX backend is selected.
-
-    The class body holds no SGLang MLX import, but the pending-step dataclasses
-    it constructs do, so this factory keeps the same "resolve after backend
-    selection" contract as the Qwen3-ASR runner factory.
-    """
+    """Return the thinker runner class once the MLX backend is selected."""
 
     from sglang.srt.hardware_backend.mlx import model_runner as _mlx_model_runner
 
@@ -861,7 +769,6 @@ def build_qwen3_omni_thinker_mlx_runner(
 
 # ---------------------------------------------------------------------------
 # Native MLX talker: checkpoint loading, native prefill, scheduler runner
-# ---------------------------------------------------------------------------
 
 
 def load_qwen3_omni_mlx_talker(
@@ -870,24 +777,7 @@ def load_qwen3_omni_mlx_talker(
     trust_remote_code: bool = False,
     revision: str | None = None,
 ) -> dict[str, Any]:
-    """Load the native MLX talker (backbone, projections, code predictor).
-
-    Handles both published layouts:
-
-    * the **official** per-expert dense checkpoint, whose MoE experts are one
-      linear per expert (fused by ``sanitize``); and
-    * a **converted 4-bit** checkpoint, whose packed ``weight``/``scales``/
-      ``biases`` only fit already-quantized modules -- so the checkpoint's own
-      ``quantization`` metadata is parsed and applied *before* the strict load.
-
-    Shard selection is ownership-based (see
-    :func:`read_qwen3_omni_component_weights`), so neither the thinker's nor
-    code2wav's tensors can enter the talker load even when a converted export
-    strips the component prefixes into per-component subdirectories.
-
-    Every failure propagates: an MLX talker was explicitly requested, so a
-    Another backend must never be substituted.
-    """
+    """Load the native MLX talker (backbone, projections, code predictor)."""
 
     from sglang.srt.hardware_backend.mlx.remote_code_gate import (
         ensure_remote_code_allowed,
@@ -950,27 +840,7 @@ class _MlxTalkerStepState:
 
 
 class Qwen3OmniMlxTalkerModelRunner(ModelRunner):
-    """Omni model runner that drives the native MLX talker.
-
-    Ownership split, mirroring the reviewed Torch talker runner
-    (:class:`~sglang_omni.models.qwen3_omni.talker_model_runner.QwenTalkerModelRunner`):
-
-    * **MLX side (this runner).** One outer talker KV cache per request, the
-      per-request codec suppression mask, and the M-RoPE row for each step.
-      The recurrence (``feedback + next_text_row``), the greedy layer-0
-      selection, and the residual-RVQ group expansion all live in the reviewed
-      model; nothing is recomputed here.
-    * **Torch side (unchanged).** The pending text FIFO
-      (``PendingTextTensorQueue``) and the feedback deque stay CPU float32 and
-      are consumed through ``QwenTalkerModelRunner``'s own helpers, so decode
-      readiness, thinker-done padding, and row ownership are the *same* code
-      as the CUDA path. Only the single row consumed by the current step
-      crosses into MLX.
-
-    Apple policy: batch-1, greedy, no chunked prefill, no radix prefix, and no
-    async decode lookahead (``apply_qwen3_omni_apple_profile`` already disables
-    partial talker start, and speculative queue state is refused outright).
-    """
+    """Omni model runner that drives the native MLX talker."""
 
     def __init__(
         self,
@@ -1056,12 +926,7 @@ class Qwen3OmniMlxTalkerModelRunner(ModelRunner):
     # -- no async lookahead ------------------------------------------------
 
     def lookahead_eligible(self, batch: Any) -> bool:
-        """The Apple talker never runs a speculative decode step.
-
-        A lookahead launch would have to sample -- and therefore emit a code
-        frame and queue a feedback row -- before its predecessor was resolved,
-        which the single feedback/text row-per-step contract cannot express.
-        """
+        """The Apple talker never runs a speculative decode step."""
 
         del batch
         return False
@@ -1083,12 +948,7 @@ class Qwen3OmniMlxTalkerModelRunner(ModelRunner):
     # -- SGLang execution contract ----------------------------------------
 
     def _build_forward_batch(self, scheduler_output: Any):
-        """No ``ForwardBatch``: the MLX talker consumes embeddings directly.
-
-        SGLang's bookkeeping stub carries no Torch attention backend state, so
-        (exactly as the MLX thinker scheduler runner does) the batch itself is
-        the only forward input.
-        """
+        """No ``ForwardBatch``: the MLX talker consumes embeddings directly."""
 
         schedule_batch = scheduler_output.batch_data
         if schedule_batch is None:
@@ -1233,15 +1093,7 @@ class Qwen3OmniMlxTalkerModelRunner(ModelRunner):
     def _emit_codes_and_queue_feedback(
         self, *, schedule_batch: Any, requests: list
     ) -> None:
-        """Emit this step's code row once and queue its feedback row.
-
-        Matches ``QwenTalkerModelRunner._emit_code_chunks_and_feedback``: one
-        ``OutgoingMessage(target="code2wav", type="stream")`` per step carrying
-        ``[num_code_groups]`` codes, and one feedback row appended to the
-        request's pending queue. The codec-EOS frame is emitted too -- exactly
-        as the CUDA path does, and code2wav drops it -- so a terminal step
-        neither duplicates nor silently swallows a frame.
-        """
+        """Emit this step's code row once and queue its feedback row."""
 
         if not self._feedback_enabled:
             self._pending_steps.clear()
@@ -1278,15 +1130,7 @@ class Qwen3OmniMlxTalkerModelRunner(ModelRunner):
     def _take_next_decode_rows(
         sched_req: Any,
     ) -> tuple[torch.Tensor, torch.Tensor] | None:
-        """Consume exactly one feedback row and one text row, FIFO.
-
-        The queue protocol is ``QwenTalkerModelRunner``'s, helper for helper:
-        peek both rows, refuse the step when either is missing, fall back to
-        the projected TTS pad row only once the thinker stream is done, then
-        pop one feedback row and (when present) one text row. The two rows are
-        returned *unsummed* because the MLX talker owns the recurrence; their
-        sum is exactly ``_take_next_decode_input_embed``'s return value.
-        """
+        """Consume exactly one feedback row and one text row, FIFO."""
 
         data = sched_req.data
         feedback = QwenTalkerModelRunner._peek_left(
@@ -1305,7 +1149,6 @@ class Qwen3OmniMlxTalkerModelRunner(ModelRunner):
                 return None
         # Ownership check before combination: both rows must already be the
         # request's own CPU float32 rows, never a device tensor or a
-        # silently-downcast view.
         feedback_row = QwenTalkerModelRunner._decode_row(
             feedback, device=_CPU, dtype=torch.float32
         )
@@ -1320,14 +1163,7 @@ class Qwen3OmniMlxTalkerModelRunner(ModelRunner):
     # -- positions ---------------------------------------------------------
 
     def _prefill_positions(self, sched_req: Any, length: int) -> torch.Tensor:
-        """The ``[3, length]`` M-RoPE rows for the talker prompt.
-
-        The request builder attaches the rows it computed (``linear_mrope_positions``
-        for a prompt with no emitted multimodal segment, the full multimodal
-        computation otherwise). When it attached none -- a request built
-        without ``talker_model_inputs`` -- the same linear arange is rebuilt
-        here from the shared helper rather than re-derived.
-        """
+        """The ``[3, length]`` M-RoPE rows for the talker prompt."""
 
         request_id = sched_req.request_id
         multimodal_inputs = getattr(sched_req.data.req, "multimodal_inputs", None)
@@ -1353,14 +1189,7 @@ class Qwen3OmniMlxTalkerModelRunner(ModelRunner):
         return rows.detach().cpu().to(torch.int64)
 
     def _decode_positions(self, request_id: str, cache: list[Any]) -> torch.Tensor:
-        """The ``[3, 1]`` M-RoPE row for the next talker token.
-
-        SGLang derives a decode position as ``seq_len - 1 + mrope_position_delta``
-        on all three axes; ``cache[0].offset`` is exactly that ``seq_len - 1``
-        (the rows already resident in the talker cache). With the linear
-        prompt positions this continues ``0..L-1`` with ``L, L+1, ...``, step
-        for step with the CUDA talker.
-        """
+        """The ``[3, 1]`` M-RoPE row for the next talker token."""
 
         position = int(cache[0].offset) + int(self._mrope_delta.get(request_id, 0))
         return torch.full((3, 1), position, dtype=torch.int64)
@@ -1383,12 +1212,7 @@ class Qwen3OmniMlxTalkerModelRunner(ModelRunner):
 
 
 def make_qwen3_omni_talker_mlx_runner_class() -> type:
-    """Return the talker model-runner class once the MLX backend is selected.
-
-    Mirrors the thinker factory's "resolve after backend selection" contract:
-    the class body holds no SGLang MLX import, but the worker it is bound to
-    does, so the import is asserted here rather than at module import time.
-    """
+    """Return the talker model-runner class once the MLX backend is selected."""
 
     from sglang.srt.hardware_backend.mlx import model_runner_stub as _stub
 
@@ -1425,15 +1249,7 @@ def _create_qwen3_omni_talker_mlx_worker(
     gpu_id: int,
     tp_rank: int = 0,
 ):
-    """Zero-weight scheduler worker carrying the loaded native MLX talker.
-
-    The talker's forward consumes talker-space *embeddings*, not token ids, so
-    SGLang's token-id-driven MLX worker API cannot express it. The worker is
-    therefore an external-forward worker (bookkeeping pools only) and
-    :class:`Qwen3OmniMlxTalkerModelRunner` owns the forward. The MLX weights
-    and the native MLX prefill builder are built here, once, so the request
-    builder never sees the zero-weight stub model.
-    """
+    """Zero-weight scheduler worker carrying the loaded native MLX talker."""
 
     from sglang_omni.model_runner.external_model_worker import (
         _build_parallel_state,
@@ -1517,13 +1333,7 @@ def create_qwen3_omni_mlx_worker(
     gpu_id: int,
     tp_rank: int = 0,
 ):
-    """Construct the MLX worker for a Qwen3-Omni stage.
-
-    Any failure here -- an unsupported architecture, a checkpoint that does not
-    load, a config the native model refuses -- propagates to the caller. The
-    MLX backend is explicitly requested, so another worker must never be
-    substituted behind the user's back.
-    """
+    """Construct the MLX worker for a Qwen3-Omni stage."""
 
     architecture = config.model_arch_override
     if architecture == "Qwen3OmniTalker":
@@ -1600,13 +1410,7 @@ def create_qwen3_omni_mlx_worker(
             self._mlx_pool_initialized = False
 
         def finalize_mlx_result(self, launch: Any, reqs: list) -> Any:
-            """Attach this step's thinker captures to the batch result.
-
-            The thinker stream builder reads
-            ``logits_output.hidden_states`` as a ``{"embed": ..., N: ...}``
-            dict; the MLX runner is its sole source because this worker holds
-            SGLang's zero-weight stub model and therefore no static capture.
-            """
+            """Attach this step's thinker captures to the batch result."""
 
             result = super().finalize_mlx_result(launch, reqs)
             hidden = self._pop_launch_hidden_states(launch)
@@ -1642,12 +1446,7 @@ def create_qwen3_omni_mlx_worker(
 
 
 def _scheduler_runner_base() -> type:
-    """The shared MLX scheduler runner.
-
-    Resolved through a call so ``mlx_model_worker`` -- which reaches back into
-    this module only through a deferred factory -- is imported exactly once and
-    in one direction.
-    """
+    """The shared MLX scheduler runner."""
 
     from sglang_omni.model_runner.mlx_model_worker import MlxSchedulerModelRunner
 
@@ -1655,17 +1454,7 @@ def _scheduler_runner_base() -> type:
 
 
 class Qwen3OmniMlxSchedulerModelRunner(_scheduler_runner_base()):  # type: ignore[misc]
-    """Omni scheduler adapter for the native MLX thinker.
-
-    Adds exactly two things to the shared MLX scheduler runner:
-
-    * per-request MLX cache release on abort and on normal completion, so a
-      request's KV cache and capture rows never outlive it;
-    * an explicit guarantee that the runner-populated
-      ``logits_output.hidden_states`` dictionary survives finalize and reaches
-      ``SGLangOutputProcessor`` (which is constructed with ``model=None`` for
-      this backend, making that dictionary the sole capture source).
-    """
+    """Omni scheduler adapter for the native MLX thinker."""
 
     def abort_request(self, request_id: str) -> None:
         """Scheduler abort callback: drop the request's MLX cache."""

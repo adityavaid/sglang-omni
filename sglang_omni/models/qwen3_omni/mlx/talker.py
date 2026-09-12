@@ -1,53 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Native MLX Qwen3-Omni talker backbone and per-step code predictor.
-
-The module implements the Transformers 5.12.1 talker stack
-(``Qwen3OmniMoeTalkerForConditionalGeneration``) on top of the reviewed
-primitives in :mod:`sglang_omni.models.qwen3_omni.mlx.common` and the attention
-block already validated for the thinker in
-:mod:`sglang_omni.models.qwen3_omni.mlx.thinker`:
-
-* :class:`TalkerResizeMLP` -- the ``text_projection`` / ``hidden_projection``
-  resize MLPs that lift thinker-space rows into talker space.
-* :class:`Qwen3OmniMlxTalker` -- codec embedding, interleaved three-axis M-RoPE
-  decoder layers with per-head Q/K norms, sparse MoE with the talker's gated
-  shared expert, final norm, and the ``codec_head`` that produces layer-0 codec
-  logits.
-* :class:`Qwen3OmniMlxCodePredictor` -- the residual RVQ predictor that expands
-  one layer-0 codec token into ``num_code_groups`` ordered codes and the single
-  summed feedback row the next talker step consumes.
-
-Scope and contracts:
-
-* **Greedy only.** Layer-0 selection is ``argmax`` over the suppressed codec
-  logits and every code group is ``argmax`` over its own head, matching the
-  Apple profile (``talker_temperature=0.0``, ``talker_top_k=-1``) and the
-  existing Torch talker's ``_sample_code_predictor_token``.
-* **Suppression happens before the layer-0 argmax**, exactly as
-  ``Qwen3OmniMoeTalkerForConditionalGeneration.generate`` (``suppress_tokens``)
-  and ``Qwen3OmniMoeTalkerTextModel._sample_decode_tokens`` do. The codec EOS is
-  never part of the official suppression set, so it stays selectable.
-* **Cache lifetime.** Only the outer talker KV cache lives across decode steps;
-  the predictor allocates and drops its own cache inside every
-  :meth:`Qwen3OmniMlxCodePredictor.generate_groups` call, so no residual
-  group-expansion state can leak into the next talker token.
-* **Decode recurrence.** The next talker input row is
-  ``feedback + next_text_row`` -- the summed codec embeddings of the previous
-  step plus the next projected thinker text row (or the TTS pad row once the
-  text queue drains). This is HF's
-  ``prepare_inputs_for_generation`` recurrence and the production Torch path in
-  ``sglang_omni/models/qwen3_omni/talker_model_runner.py``
-  (``_combine_feedback_with_next_text``).
-* **All talker layers are sparse.** ``Qwen3OmniMoeTalkerDecoderLayer``
-  overwrites its MLP with ``Qwen3OmniMoeTalkerTextSparseMoeBlock``
-  unconditionally, so -- unlike the thinker -- ``mlp_only_layers`` and
-  ``decoder_sparse_step`` never produce a dense talker layer.
-* **Batch-1, single device, eager.** MLX serving is batch-1 by design, so
-  positions are a ``(3, sequence)`` M-RoPE tensor and the sole batch row is
-  asserted.
-* **Scope.** No scheduler integration, streaming queue, or code2wav lives here;
-  those belong to the wiring task.
-"""
+"""Native MLX Qwen3-Omni talker backbone and per-step code predictor."""
 
 from __future__ import annotations
 
@@ -96,18 +48,7 @@ _DROPPED_SUFFIXES = ("rotary_emb.inv_freq", "rotary_emb.original_inv_freq")
 
 @dataclass(slots=True)
 class MlxTalkerStep:
-    """One talker step: the layer-0 token, its hidden row, codes, and feedback.
-
-    ``codes`` holds ``num_code_groups`` integer codes in official group order
-    (group 0 is the layer-0 codec token). ``feedback`` is the single summed code
-    embedding row that the *next* talker step adds to its text contribution.
-    ``cache`` is the outer talker KV cache and is the only state that survives
-    the step.
-
-    ``layer0_token`` is int32 at this boundary: the scheduler publishes it as a
-    codec token id, so the model -- not its caller -- owns the cast away from
-    ``argmax``'s platform-dependent index dtype.
-    """
+    """One talker step: the layer-0 token, its hidden row, codes, and feedback."""
 
     layer0_token: mx.array
     hidden: mx.array
@@ -118,21 +59,10 @@ class MlxTalkerStep:
 
 # ---------------------------------------------------------------------------
 # Layer-0 suppression
-# ---------------------------------------------------------------------------
 
 
 def build_suppress_mask(vocab_size: int, suppress_tokens: Iterable[int]) -> mx.array:
-    """Build the additive ``[vocab_size]`` mask for suppressed codec tokens.
-
-    The mask is ``-inf`` on suppressed ids and ``0`` elsewhere, so adding it to
-    the codec logits removes those ids from the greedy argmax. Building it once
-    per request (rather than per step) is the reason this is a public helper.
-
-    Raises:
-        ValueError: If any id falls outside ``[0, vocab_size)``, or if the set
-            would suppress the entire vocabulary (which would make the argmax
-            meaningless rather than merely constrained).
-    """
+    """Build the additive ``[vocab_size]`` mask for suppressed codec tokens."""
 
     unique = sorted({int(token_id) for token_id in suppress_tokens})
     invalid = [token_id for token_id in unique if not 0 <= token_id < vocab_size]
@@ -149,12 +79,7 @@ def build_suppress_mask(vocab_size: int, suppress_tokens: Iterable[int]) -> mx.a
 def mask_suppressed_logits(
     logits: mx.array, suppress: Sequence[int] | mx.array | None
 ) -> mx.array:
-    """Apply codec suppression to logits *before* the layer-0 argmax.
-
-    ``suppress`` is either ``None``, a sequence of token ids, or an already
-    built additive mask from :func:`build_suppress_mask` (the cheap per-step
-    path). Returns ``logits`` unchanged when nothing is suppressed.
-    """
+    """Apply codec suppression to logits *before* the layer-0 argmax."""
 
     if suppress is None:
         return logits
@@ -175,15 +100,10 @@ def mask_suppressed_logits(
 
 # ---------------------------------------------------------------------------
 # Resize MLPs
-# ---------------------------------------------------------------------------
 
 
 class TalkerResizeMLP(nn.Module):
-    """``Qwen3OmniMoeTalkerResizeMLP``: thinker hidden size -> talker hidden size.
-
-    Both projections carry biases in the official checkpoint, and the activation
-    is the config's ``hidden_act`` (SiLU for every published Qwen3-Omni release).
-    """
+    """``Qwen3OmniMoeTalkerResizeMLP``: thinker hidden size -> talker hidden size."""
 
     def __init__(
         self, *, thinker_hidden_size: int, intermediate_size: int, hidden_size: int
@@ -198,19 +118,10 @@ class TalkerResizeMLP(nn.Module):
 
 # ---------------------------------------------------------------------------
 # Talker backbone
-# ---------------------------------------------------------------------------
 
 
 class TalkerDecoderLayer(nn.Module):
-    """Pre-norm decoder layer: M-RoPE attention plus the gated shared-expert MoE.
-
-    ``Qwen3OmniMoeTalkerDecoderLayer`` reuses the thinker's attention block
-    verbatim (interleaved three-axis M-RoPE, per-head Q/K RMS norms, no sliding
-    window) and then *unconditionally* assigns
-    ``Qwen3OmniMoeTalkerTextSparseMoeBlock`` -- the dense branch it appears to
-    select first is dead code upstream. The talker therefore has no dense
-    layers, which is why this class takes no layer index.
-    """
+    """Pre-norm decoder layer: M-RoPE attention plus the gated shared-expert MoE."""
 
     def __init__(self, config: MoeTextConfig, *, attention_bias: bool):
         super().__init__()
@@ -260,18 +171,10 @@ class TalkerTextModel(nn.Module):
 
 # ---------------------------------------------------------------------------
 # Code predictor
-# ---------------------------------------------------------------------------
 
 
 class CodePredictorAttention(nn.Module):
-    """Standard (single-axis) rotary attention with per-head Q/K RMS norms.
-
-    ``Qwen3OmniMoeTalkerCodePredictorAttention`` uses
-    ``Qwen3OmniMoeRotaryEmbedding`` -- the plain default rope, *not* the
-    interleaved three-axis M-RoPE of the talker backbone -- over the predictor's
-    own short sequence (the talker hidden row, the layer-0 code embedding, then
-    one row per generated group).
-    """
+    """Standard (single-axis) rotary attention with per-head Q/K RMS norms."""
 
     def __init__(self, config: CodePredictorConfig, *, attention_bias: bool):
         super().__init__()
@@ -363,13 +266,7 @@ class CodePredictorDecoderLayer(nn.Module):
 
 
 class CodePredictorModel(nn.Module):
-    """Per-group codec embeddings, decoder layers, and the final norm.
-
-    ``codec_embedding`` holds ``num_code_groups - 1`` tables: group ``g`` (for
-    ``g >= 1``) is embedded by table ``g - 1``, matching upstream's
-    ``codec_embedding[generation_steps - 1]`` indexing. Group 0 is embedded by
-    the *talker's* ``model.codec_embedding``, not by this list.
-    """
+    """Per-group codec embeddings, decoder layers, and the final norm."""
 
     def __init__(self, config: CodePredictorConfig, *, attention_bias: bool):
         super().__init__()
@@ -385,13 +282,7 @@ class CodePredictorModel(nn.Module):
 
 
 class Qwen3OmniMlxCodePredictor(nn.Module):
-    """Greedy residual-RVQ predictor for one layer-0 codec token.
-
-    Mirrors ``Qwen3OmniMoeTalkerCodePredictorModelForConditionalGeneration``:
-    the predictor prompt is ``[talker_hidden_row, layer0_code_embedding]``, head
-    ``g`` reads the last hidden row to emit group ``g + 1``, and each emitted
-    code is fed back through ``codec_embedding[g]``.
-    """
+    """Greedy residual-RVQ predictor for one layer-0 codec token."""
 
     def __init__(self, config: CodePredictorConfig, *, attention_bias: bool = False):
         super().__init__()
@@ -429,24 +320,7 @@ class Qwen3OmniMlxCodePredictor(nn.Module):
         layer0_embed: mx.array,
         talker_hidden: mx.array,
     ) -> tuple[mx.array, mx.array]:
-        """Expand one layer-0 token into ordered codes and one feedback row.
-
-        Args:
-            layer0_token: ``[1]`` greedy codec token of the current talker step.
-            layer0_embed: ``[1, 1, hidden]`` embedding of that token taken from
-                the *talker's* codec embedding table (upstream's
-                ``last_id_hidden``).
-            talker_hidden: ``[1, 1, hidden]`` last talker hidden row (upstream's
-                ``past_hidden``).
-
-        Returns:
-            ``(codes, feedback)`` with ``codes`` shaped ``[1, num_code_groups]``
-            in official group order and ``feedback`` shaped ``[1, hidden]``:
-            the sum of the selected code embeddings across every group.
-
-        The KV cache is created here and dropped on return, so the predictor
-        carries no state between outer talker tokens.
-        """
+        """Expand one layer-0 token into ordered codes and one feedback row."""
 
         hidden_size = self.config.hidden_size
         if layer0_token.ndim != 1 or layer0_token.shape[0] != 1:
@@ -465,7 +339,6 @@ class Qwen3OmniMlxCodePredictor(nn.Module):
         cache = self.make_cache()
         # Upstream prefills both prompt rows in one call; the predictor's
         # attention is causal, so this is the same computation the incremental
-        # Torch path performs one row at a time.
         prompt = mx.concatenate(
             [talker_hidden, layer0_embed.astype(talker_hidden.dtype)], axis=1
         )
@@ -488,7 +361,6 @@ class Qwen3OmniMlxCodePredictor(nn.Module):
 
 # ---------------------------------------------------------------------------
 # Talker
-# ---------------------------------------------------------------------------
 
 
 class Qwen3OmniMlxTalker(nn.Module):
@@ -507,8 +379,6 @@ class Qwen3OmniMlxTalker(nn.Module):
         predictor_config = config.code_predictor_config
         # Group 0 is emitted by this module's codec head and embedded by the
         # talker's own codec table; groups 1..N-1 belong to the predictor's
-        # per-group tables and heads. A disagreement would build a talker that
-        # emits a different number of codes than the predictor can expand.
         if int(config.num_code_groups) != int(predictor_config.num_code_groups):
             raise ValueError(
                 f"talker num_code_groups={int(config.num_code_groups)} disagrees "
@@ -518,7 +388,6 @@ class Qwen3OmniMlxTalker(nn.Module):
         self.thinker_hidden_size = int(thinker_hidden_size)
         # ``attention_bias`` defaults to the value parsed from the checkpoint's
         # talker text config (false for every published Qwen3-Omni release); an
-        # explicit keyword still wins so unit fixtures can pin either wiring.
         self.attention_bias = (
             bool(text_config.attention_bias)
             if attention_bias is None
@@ -546,15 +415,7 @@ class Qwen3OmniMlxTalker(nn.Module):
     def from_omni_config(
         cls, config: Qwen3OmniMlxConfig, **kwargs: Any
     ) -> "Qwen3OmniMlxTalker":
-        """Build from the nested Omni config.
-
-        The resize MLPs are sized from ``talker_config.thinker_hidden_size``,
-        which is the field the published checkpoints actually declare for them.
-        A config predating that field falls back to the parsed thinker text
-        hidden size (the two are equal in every published release), and a
-        config that declares a value contradicting the thinker it is paired
-        with is rejected rather than silently sizing the projections wrong.
-        """
+        """Build from the nested Omni config."""
 
         declared = config.talker.thinker_hidden_size
         thinker_hidden_size = config.thinker.text_config.hidden_size
@@ -591,15 +452,7 @@ class Qwen3OmniMlxTalker(nn.Module):
     # -- weights -----------------------------------------------------------
 
     def sanitize(self, weights: Mapping[str, mx.array]) -> dict[str, mx.array]:
-        """Map official checkpoint weights onto this self-contained module.
-
-        Accepts both the official ``talker.*`` keys and already stripped
-        converted keys, drops the thinker/code2wav namespaces and the
-        non-persistent rotary buffers, fuses the published per-expert MoE
-        linears into the quantizable ``SwitchLinear`` stacks, and leaves
-        quantized ``.scales``/``.biases`` untouched so a converted 4-bit
-        checkpoint loads. The mapping is idempotent.
-        """
+        """Map official checkpoint weights onto this self-contained module."""
 
         stripped = sanitize_qwen3_omni_weights(weights, component="talker")
         sanitized: dict[str, mx.array] = {}
@@ -620,13 +473,7 @@ class Qwen3OmniMlxTalker(nn.Module):
         multimodal_hidden: mx.array | None = None,
         multimodal_mask: mx.array | None = None,
     ) -> mx.array:
-        """Lift thinker-space prompt rows into talker space.
-
-        Text rows go through ``text_projection`` and multimodal rows through
-        ``hidden_projection``, matching ``_get_talker_user_parts`` and the Torch
-        path's ``prepare_input_embeds``. ``multimodal_hidden`` carries the
-        thinker's ``accept_hidden_layer`` rows.
-        """
+        """Lift thinker-space prompt rows into talker space."""
 
         if input_embeddings.ndim != 3:
             raise ValueError(
@@ -746,13 +593,7 @@ class Qwen3OmniMlxTalker(nn.Module):
         suppress_tokens: Sequence[int] | mx.array | None = None,
         cache: list[Any] | None = None,
     ) -> MlxTalkerStep:
-        """Run the talker prompt and expand the first code frame.
-
-        ``input_embeddings_are_projected`` distinguishes the two production
-        prompt modes: the prompt builder emits rows that are *already* in talker
-        space (projected text rows plus codec special-token embeddings), whereas
-        a raw thinker-hidden prompt is projected here -- exactly once.
-        """
+        """Run the talker prompt and expand the first code frame."""
 
         projected = (
             input_embeddings
@@ -786,14 +627,7 @@ class Qwen3OmniMlxTalker(nn.Module):
         cache: list[Any],
         suppress_tokens: Sequence[int] | mx.array | None = None,
     ) -> MlxTalkerStep:
-        """Run one autoregressive talker step against an existing KV cache.
-
-        The input row is ``feedback + next_text_row``: the previous step's
-        summed code embeddings plus the next projected thinker text row, or the
-        projected TTS pad row once the text queue drains. Both rows are already
-        in talker space; the caller owns the queue policy, exactly as
-        ``QwenTalkerModelRunner._combine_feedback_with_next_text`` does.
-        """
+        """Run one autoregressive talker step against an existing KV cache."""
 
         if next_text_row is None:
             raise ValueError(

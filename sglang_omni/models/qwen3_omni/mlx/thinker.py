@@ -1,36 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Native MLX Qwen3-Omni thinker (text decoder only).
-
-The module implements the Transformers 5.12.1 ``Qwen3OmniMoeThinkerTextModel``
-stack -- interleaved three-axis M-RoPE attention with per-head Q/K norms, sparse
-MoE (or dense SwiGLU) MLPs, DeepStack visual residuals, and the LM head -- on top
-of the reviewed primitives in :mod:`sglang_omni.models.qwen3_omni.mlx.common`.
-
-Scope and contracts:
-
-* **Encoders stay outside.** The vision and audio towers run in their own
-  pipeline stages; this model consumes the merged embeddings they produce.
-  :func:`merge_thinker_input_embeddings` and :func:`visual_placeholder_mask`
-  reproduce the placeholder ordering of the existing Torch/CUDA thinker path
-  (``sglang_omni/model_runner/thinker_model_runner.py``): the *k*-th placeholder
-  row of a modality receives the *k*-th row of that modality's embeddings, and
-  the DeepStack mask is the prompt-ordered union of image and video
-  placeholders.
-* **Hidden capture.** ``"embed"`` is the input to layer 0; an integer key ``N``
-  is the input to layer ``N`` (the output of layer ``N-1``, *including* any
-  DeepStack rows added after layer ``N-1``). Layer 0 is never emitted as a
-  duplicate integer key. Prefill keeps every row as ``[sequence, hidden]``
-  because the CUDA stream normalizer forwards the first prefill row into
-  ``TalkerPrefillBuilder``; decode naturally yields a single row.
-* **Batch-1, single device.** MLX serving is batch-1 by design, so positions are
-  a ``(3, sequence)`` M-RoPE tensor and the sole batch row is asserted.
-* **Attention shape.** The thinker attention is fully causal: the reference
-  ``Qwen3OmniMoeThinkerTextAttention`` hard-codes ``sliding_window = None``
-  regardless of the text config, so no sliding-window branch exists here.
-* **No shared expert.** ``Qwen3OmniMoeThinkerTextSparseMoeBlock`` has routed
-  experts only (unlike the talker block), so the shared-expert branch of
-  :class:`SparseMoeBlock` is never enabled for the thinker.
-"""
+"""Native MLX Qwen3-Omni thinker (text decoder only)."""
 
 from __future__ import annotations
 
@@ -77,17 +46,10 @@ class MlxThinkerStep:
 
 # ---------------------------------------------------------------------------
 # Modality merging helpers (stage-facing)
-# ---------------------------------------------------------------------------
 
 
 def _rows_by_placeholder_slot(mask: mx.array, rows: mx.array) -> mx.array:
-    """Broadcast ``rows`` so slot ``k`` lands on the ``k``-th masked position.
-
-    ``mask`` is ``[batch, sequence]``; the exclusive running count of masked
-    positions gives each masked token the index of its own embedding row, which
-    keeps the mapping prompt-ordered without a host round-trip. Values under
-    unmasked positions are meaningless and are always discarded by the caller.
-    """
+    """Broadcast ``rows`` so slot ``k`` lands on the ``k``-th masked position."""
 
     slot = mx.cumsum(mask.astype(mx.int32), axis=-1) - 1
     return rows[mx.maximum(slot, 0)]
@@ -100,24 +62,7 @@ def merge_thinker_input_embeddings(
     modality_embeddings: Mapping[str, mx.array | None],
     placeholder_token_ids: Mapping[str, int],
 ) -> mx.array:
-    """Scatter stage-provided modality embeddings onto their placeholder rows.
-
-    Args:
-        text_embeddings: ``[batch, sequence, hidden]`` embedding lookup output.
-        input_ids: ``[batch, sequence]`` prompt token ids.
-        modality_embeddings: Per-modality ``[rows, hidden]`` embeddings; ``None``
-            or an absent modality is skipped.
-        placeholder_token_ids: Modality name to placeholder token id.
-
-    Returns:
-        The merged ``[batch, sequence, hidden]`` embeddings.
-
-    Raises:
-        ValueError: If a modality is unknown, its hidden size disagrees with the
-            text embeddings, or its row count does not match the number of
-            placeholders in the prompt. The count check is the only host
-            synchronization, and it runs once per modality per prefill.
-    """
+    """Scatter stage-provided modality embeddings onto their placeholder rows."""
 
     if text_embeddings.ndim != 3:
         raise ValueError(
@@ -161,12 +106,7 @@ def merge_thinker_input_embeddings(
 def visual_placeholder_mask(
     input_ids: mx.array, *, placeholder_token_ids: Mapping[str, int]
 ) -> mx.array:
-    """Prompt-ordered ``[batch, sequence]`` mask of image and video placeholders.
-
-    DeepStack rows are indexed by this mask, so it must be the union of the image
-    and video placeholder positions in prompt order -- exactly the sorted
-    concatenation the Torch path builds -- and must never include audio rows.
-    """
+    """Prompt-ordered ``[batch, sequence]`` mask of image and video placeholders."""
 
     mask = mx.zeros(input_ids.shape, dtype=mx.bool_)
     for modality in _VISUAL_MODALITIES:
@@ -205,7 +145,6 @@ def add_visual_rows(
 
 # ---------------------------------------------------------------------------
 # Decoder stack
-# ---------------------------------------------------------------------------
 
 
 class ThinkerAttention(nn.Module):
@@ -350,7 +289,6 @@ class Qwen3OmniMlxThinker(nn.Module):
         self.config = config
         # ``attention_bias`` defaults to the value parsed from the checkpoint's
         # thinker text config (false for every published Qwen3-Omni release);
-        # an explicit keyword still wins so unit fixtures can pin either wiring.
         self.attention_bias = (
             bool(config.attention_bias)
             if attention_bias is None
@@ -388,15 +326,7 @@ class Qwen3OmniMlxThinker(nn.Module):
     # -- weights -----------------------------------------------------------
 
     def sanitize(self, weights: Mapping[str, mx.array]) -> dict[str, mx.array]:
-        """Map official checkpoint weights onto this self-contained module.
-
-        Keeps only ``thinker.model.*`` and ``thinker.lm_head.*``; the thinker's
-        own vision/audio towers, the talker, and code2wav are dropped. Weights
-        that are already in converted MLX layout pass through unchanged (so the
-        call is idempotent and stays compatible with the quantized pre-load
-        conversion in :func:`quantize_converted_module`). A tied model has no
-        ``lm_head`` module, so a tied checkpoint's ``lm_head`` copy is dropped.
-        """
+        """Map official checkpoint weights onto this self-contained module."""
 
         stripped = sanitize_qwen3_omni_weights(weights, component="thinker")
         sanitized: dict[str, mx.array] = {}
@@ -494,15 +424,7 @@ class Qwen3OmniMlxThinker(nn.Module):
         cache: list[Any] | None = None,
         capture_layers: tuple[int, ...] = (),
     ) -> MlxThinkerStep:
-        """Run a prefill step over the merged prompt embeddings.
-
-        ``input_embeddings`` carries the stage-merged text/image/audio rows (see
-        :func:`merge_thinker_input_embeddings`); when omitted the prompt is
-        text-only and is embedded here. ``deepstack_visual_embeds`` holds one
-        ``[visual_rows, hidden]`` tensor per DeepStack layer, added after the
-        matching decoder layer, so its effect first appears in the *next*
-        captured layer.
-        """
+        """Run a prefill step over the merged prompt embeddings."""
 
         if input_ids.ndim == 1:
             input_ids = input_ids[None, :]

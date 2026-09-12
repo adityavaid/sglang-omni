@@ -1,10 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Native MLX backend primitives for Qwen3-Omni.
-
-Configuration and checkpoint helpers are usable without MLX installed.
-Shared math primitives load lazily so Torch encoder imports do not require
-the optional Apple backend.
-"""
+"""Native MLX backend primitives for Qwen3-Omni."""
 
 from __future__ import annotations
 

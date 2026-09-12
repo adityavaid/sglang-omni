@@ -1,12 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Zero-weight SGLang worker for stages whose forward runs outside SGLang.
-
-Some Apple-Silicon stages run their model through an architecture-specific
-native MLX runner. The scheduler still needs a worker with
-real request/KV bookkeeping pools, so this module reuses SGLang's MLX stub
-runner purely as that bookkeeping implementation: no weights are loaded and
-no model forward is ever executed here.
-"""
+"""Zero-weight SGLang worker for stages whose forward runs outside SGLang."""
 
 from __future__ import annotations
 
@@ -87,7 +80,6 @@ def _make_external_worker_class():
 
         # Read by create_sglang_infrastructure() and the Qwen3-Omni bootstrap:
         # this worker has no real Torch model, so hidden-state capture hooks,
-        # Torch graph capture, and sampler wiring must not be installed on it.
         uses_external_forward = True
 
         def __init__(self, *, external_backend_name: str, **kwargs: Any) -> None:
@@ -126,15 +118,7 @@ def _make_external_worker_class():
             )
 
         def prepare_for_kv_cache_release(self, req: Any) -> None:
-            """No MLX auxiliary state exists to snapshot on this worker.
-
-            The scheduler calls this hook for every finished request. Upstream's
-            MLX worker uses it to snapshot ``self._mlx_runner`` state before the
-            radix insert; this worker builds no MLX runner at all -- the
-            external runner owns the per-request cache and frees it from its own
-            completion/abort path -- so the hook must be inert instead of
-            reaching for an attribute that was never created.
-            """
+            """No MLX auxiliary state exists to snapshot on this worker."""
             del req
 
         def get_tp_group(self):

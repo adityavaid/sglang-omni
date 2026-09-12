@@ -327,7 +327,9 @@ def validate_qwen3_omni_apple_checkpoint(
             f"got {architectures!r}"
         )
     root = config_path.parent
-    components = _components_from_indexes(root, index_paths, use_mlx=use_mlx)
+    components = _components_from_indexes(
+        root, index_paths, use_mlx=use_mlx
+    )
     if Path(model_path).exists():
         components.update(
             _components_from_single_files(

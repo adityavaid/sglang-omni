@@ -1,23 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Native MLX primitives for Qwen3-Omni thinker/talker stacks.
-
-This module implements the correctness-critical foundations shared by the later
-thinker and talker models:
-
-* :func:`apply_multimodal_rope` -- interleaved three-axis (temporal/height/width)
-  M-RoPE that matches the Transformers 5.12.1 reference rotary embedding.
-* :class:`SparseMoeBlock` -- routed SwiGLU experts with optional talker shared
-  expert, matching the reference MoE math (softmax router, top-k selection,
-  optional top-k normalization, scatter-add of expert contributions).
-* :func:`sanitize_qwen3_omni_weights` -- HF -> MLX weight sanitation that strips
-  the selected component prefix, transposes only convolution kernels, and
-  normalizes the fused MoE expert stacks onto their quantizable modules.
-* :func:`tie_lm_head_weights` -- genuine module-level embedding tying.
-* :func:`quantize_converted_module` -- quantizes only the linear layers that the
-  converted checkpoint actually represents, rejecting incomplete groups.
-* :func:`load_qwen3_omni_mlx_component` -- shared strict load path that applies
-  component-specific sanitation, optional quantization, and MLX materialization.
-"""
+"""Native MLX primitives for Qwen3-Omni thinker/talker stacks."""
 
 from __future__ import annotations
 
@@ -34,7 +16,6 @@ from sglang_omni.models.qwen3_omni.mlx.config import QuantizationConfig
 _COMPONENT_PREFIXES = ("thinker.", "talker.", "code2wav.")
 # The fused MoE expert stacks are stored as one 3-D tensor per projection in the
 # HF checkpoint. They live on quantizable ``SwitchLinear`` modules here, so a
-# converted 4-bit checkpoint can carry ``.scales``/``.biases`` beside them.
 _EXPERT_STACK_NAMES = ("gate_up_proj", "down_proj")
 # Published checkpoints serialize one linear per expert instead of the fused
 # stack the module holds; ``stack_legacy_expert_weights`` folds them together.
@@ -55,19 +36,7 @@ def _rotate_half(x: mx.array) -> mx.array:
 
 
 def _interleave_mrope(freqs: mx.array, sections: tuple[int, ...]) -> mx.array:
-    """Reorganize chunked ``[TTT..HHH..WWW]`` freqs into interleaved ``[THWTHW..]``.
-
-    ``freqs`` has shape ``(3, seq, head_dim // 2)`` (temporal/height/width rows).
-    The result ``(seq, head_dim // 2)`` starts from the temporal row and then
-    overwrites the height and width columns exactly as the reference
-    ``Qwen3OmniMoeThinkerTextRotaryEmbedding.apply_interleaved_mrope`` does.
-
-    The reference writes ``freqs_t[..., slice(offset, section * 3, 3)]``. A
-    Python slice clamps its stop, so a section whose interleaved columns run
-    past ``head_dim // 2`` writes only the columns that fit and the tail stays
-    temporal. Clamping the column range here reproduces that instead of
-    indexing off the end.
-    """
+    """Reorganize chunked ``[TTT..HHH..WWW]`` freqs into interleaved ``[THWTHW..]``."""
 
     half = freqs.shape[-1]
     axis_of_col = [0] * half
@@ -92,23 +61,7 @@ def apply_multimodal_rope(
     sections: tuple[int, ...],
     base: float,
 ) -> tuple[mx.array, mx.array]:
-    """Apply interleaved three-axis M-RoPE to query and key tensors.
-
-    Args:
-        q: Query tensor shaped ``(batch, heads, seq, head_dim)``.
-        k: Key tensor shaped ``(batch, kv_heads, seq, head_dim)``.
-        positions: Integer position ids shaped ``(3, seq)`` holding the
-            temporal, height, and width position rows.
-        sections: The ``mrope_section`` widths (summing to ``head_dim // 2``).
-        base: The rotary ``rope_theta``.
-
-    Returns:
-        The rotated ``(q, k)`` tensors with the same shapes as the inputs.
-
-    Compilation folds the fixed frequencies/axis selector and fuses the
-    elementwise rotation. Ordinary ``mx.fast.rope`` offsets cannot represent
-    the independently supplied temporal/height/width positions.
-    """
+    """Apply interleaved three-axis M-RoPE to query and key tensors."""
 
     head_dim = q.shape[-1]
     inv_freq = 1.0 / (base ** (mx.arange(0, head_dim, 2, dtype=mx.float32) / head_dim))
@@ -121,25 +74,13 @@ def apply_multimodal_rope(
 
     # Preserve each input's dtype: the reference casts its float32 cos/sin back
     # to the query/key dtype, so low-precision (fp16/bf16) Q/K must not be
-    # silently upcast to float32 here.
     q_embed = q * cos.astype(q.dtype) + _rotate_half(q) * sin.astype(q.dtype)
     k_embed = k * cos.astype(k.dtype) + _rotate_half(k) * sin.astype(k.dtype)
     return q_embed, k_embed
 
 
 class _Experts(nn.Module):
-    """Stacked expert projections, one quantizable module per HF 3-D tensor.
-
-    The HF checkpoint stores ``experts.gate_up_proj`` as a single
-    ``(num_experts, 2 * intermediate, hidden)`` parameter and
-    ``experts.down_proj`` as ``(num_experts, hidden, intermediate)`` -- exactly
-    the ``mlx-lm`` :class:`SwitchLinear` ``(experts, out, in)`` layout. Holding
-    them as ``SwitchLinear`` modules (rather than raw arrays) is what makes a
-    converted 4-bit checkpoint loadable: ``SwitchLinear.to_quantized()`` swaps in
-    ``QuantizedSwitchLinear``, whose ``weight``/``scales``/``biases`` parameters
-    are exactly the tensors such a checkpoint ships. A raw array could never
-    consume the expert ``scales``.
-    """
+    """Stacked expert projections, one quantizable module per HF 3-D tensor."""
 
     def __init__(self, num_experts: int, hidden_size: int, intermediate_size: int):
         super().__init__()
@@ -165,13 +106,7 @@ class _SwiGLUMLP(nn.Module):
 
 
 class SparseMoeBlock(nn.Module):
-    """Routed SwiGLU MoE block with an optional talker shared expert.
-
-    The parameter names (``gate.weight``, ``experts.gate_up_proj``,
-    ``experts.down_proj``, ``shared_expert.*``, ``shared_expert_gate.weight``)
-    mirror the Transformers 5.12.1 sparse MoE blocks so converted checkpoints
-    load without renaming.
-    """
+    """Routed SwiGLU MoE block with an optional talker shared expert."""
 
     def __init__(
         self,
@@ -215,16 +150,7 @@ class SparseMoeBlock(nn.Module):
         return top_indices, top_weights.astype(x.dtype)
 
     def _dispatch_experts(self, x: mx.array, indices: mx.array) -> mx.array:
-        """Route each token through only its selected top-k experts.
-
-        ``indices`` has shape ``(tokens, top_k)``. The ``SwitchLinear`` stacks
-        gather the expert weight matrix for each ``(token, expert-slot)`` pair by
-        index (``mx.gather_mm``, or ``mx.gather_qmm`` once quantized) instead of
-        computing every expert over every token, so total expert compute is
-        exactly ``tokens * top_k`` regardless of ``num_experts`` -- no
-        non-selected token row is ever multiplied by a non-routed expert's
-        weights.
-        """
+        """Route each token through only its selected top-k experts."""
 
         xs = mx.expand_dims(x, (-2, -3))  # (tokens, 1, 1, hidden)
         gate_up = self.experts.gate_up_proj(
@@ -246,8 +172,6 @@ class SparseMoeBlock(nn.Module):
         expert_out = self._dispatch_experts(x, top_indices)  # (tokens, top_k, hidden)
         # Every top-k slot for a token already maps only to that token's own
         # row, so summing across the slot axis is exactly the scatter-add of
-        # each selected expert's weighted contribution back into the token's
-        # output position -- including tokens routed to multiple experts.
         output = (expert_out * top_weights[..., None]).sum(axis=-2)
 
         if self.has_shared_expert:
@@ -259,11 +183,7 @@ class SparseMoeBlock(nn.Module):
 
 
 def _is_convolution_weight(key: str, value: mx.array) -> bool:
-    """Identify HF convolution kernels by module name, not by rank alone.
-
-    Rank-3 expert stacks (``experts.gate_up_proj`` / ``experts.down_proj``) must
-    not be treated as ``Conv1d`` kernels, so the decision is name-based.
-    """
+    """Identify HF convolution kernels by module name, not by rank alone."""
 
     if not key.endswith(".weight"):
         return False
@@ -273,16 +193,7 @@ def _is_convolution_weight(key: str, value: mx.array) -> bool:
 
 
 def normalize_expert_stack_key(key: str) -> str:
-    """Map a fused MoE expert stack onto its ``SwitchLinear`` weight name.
-
-    HF stores the stack as the bare parameter ``...mlp.experts.gate_up_proj``;
-    a converter that quantizes that parameter in place keeps the same name for
-    the packed tensor and adds ``...experts.gate_up_proj.scales`` /
-    ``.biases`` beside it. Both spellings therefore have to land on this
-    module's ``...experts.gate_up_proj.weight``. Keys that already carry an
-    explicit ``.weight``/``.scales``/``.biases`` suffix pass through unchanged,
-    which keeps the mapping idempotent.
-    """
+    """Map a fused MoE expert stack onto its ``SwitchLinear`` weight name."""
 
     parts = key.split(".")
     if len(parts) >= 2 and parts[-2] == "experts" and parts[-1] in _EXPERT_STACK_NAMES:
@@ -293,20 +204,7 @@ def normalize_expert_stack_key(key: str) -> str:
 def stack_legacy_expert_weights(
     weights: Mapping[str, mx.array],
 ) -> dict[str, mx.array]:
-    """Fuse per-expert MoE linears into the stacked expert layout.
-
-    Published Qwen3-Omni checkpoints serialize each expert as its own trio of
-    linears -- ``...mlp.experts.<e>.gate_proj.weight`` ``(intermediate, hidden)``,
-    ``...up_proj.weight`` ``(intermediate, hidden)`` and ``...down_proj.weight``
-    ``(hidden, intermediate)`` -- even though the Transformers module holds one
-    fused ``gate_up_proj`` parameter. They are stacked here in expert order, with
-    ``gate`` above ``up`` so ``chunk(2, dim=-1)`` of the fused projection matches
-    the reference split.
-
-    A group missing an expert index or one of the three projections raises
-    naming the layer, so a truncated checkpoint can never load as a silently
-    smaller MoE.
-    """
+    """Fuse per-expert MoE linears into the stacked expert layout."""
 
     grouped: dict[str, dict[str, dict[int, mx.array]]] = {}
     stacked: dict[str, mx.array] = {}
@@ -392,25 +290,7 @@ def sanitize_qwen3_omni_weights(
     *,
     component: Literal["thinker", "talker"],
 ) -> dict[str, mx.array]:
-    """Convert HF checkpoint weights into the native MLX layout for a component.
-
-    * Distinguishes HF source layout (keys carry a ``thinker.``/``talker.``/
-      ``code2wav.`` prefix) from an already-converted MLX checkpoint.
-    * For HF source, keeps only the selected component's tensors and strips that
-      prefix; tensors of other components are dropped.
-    * Transposes convolution kernels from HF ``(out, in, *k)`` layout to MLX
-      ``(out, *k, in)`` layout, and only when converting from HF source.
-    * Fuses per-expert MoE linears (``...experts.<e>.gate_proj.weight`` and
-      friends) into the stacked expert layout.
-    * Fuses MLX-VLM's separate stacked ``switch_mlp.gate_proj`` /
-      ``up_proj`` tensors, including packed quantization metadata, into the
-      native ``experts.gate_up_proj`` stack.
-    * Normalizes fused MoE expert stacks (``...experts.gate_up_proj`` /
-      ``...experts.down_proj``) onto the ``SwitchLinear`` weight name so a
-      converted checkpoint's expert ``scales``/``biases`` land on the same
-      module. This runs for both HF and already-converted sources and is
-      idempotent.
-    """
+    """Convert HF checkpoint weights into the native MLX layout for a component."""
 
     prefix = f"{component}."
     is_hf_source = any(key.startswith(_COMPONENT_PREFIXES) for key in weights.keys())
@@ -434,12 +314,7 @@ def sanitize_qwen3_omni_weights(
 
 
 def tie_lm_head_weights(lm_head: nn.Module, embedding: nn.Module) -> None:
-    """Genuinely tie an output projection to the input embedding weight.
-
-    The projection ends up referencing the *same* ``mx.array`` object as the
-    embedding, so the two remain a single logical weight at the module level
-    rather than a one-time numeric copy.
-    """
+    """Genuinely tie an output projection to the input embedding weight."""
 
     lm_head.weight = embedding.weight
 
@@ -450,21 +325,7 @@ def quantize_converted_module(
     *,
     quantization: QuantizationConfig,
 ) -> None:
-    """Quantize the linear layers a converted checkpoint actually represents.
-
-    ``quantization`` is the metadata parsed from the checkpoint's ``quantization``
-    block (bits / group_size / mode), so this pre-load path is driven by real
-    configuration rather than hard-coded literals.
-
-    A layer is quantized only when its ``<path>.scales`` tensor exists in the
-    converted ``weights``. Both incomplete affine directions are rejected with a
-    ``ValueError`` naming the full layer path -- ``<path>.scales`` without
-    ``<path>.biases`` and ``<path>.biases`` without ``<path>.scales`` -- so an
-    incomplete quantized group never silently falls back to dense weights.
-
-    Must be called before ``model.load_weights`` so the module types already
-    match the packed tensors on disk.
-    """
+    """Quantize the linear layers a converted checkpoint actually represents."""
 
     group_size = quantization.group_size
     bits = quantization.bits

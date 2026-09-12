@@ -1,13 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Native MLX configuration parser for Qwen3-Omni.
-
-The parser mirrors the nested Transformers 5.12.1 ``Qwen3OmniMoeConfig`` layout
-(``thinker_config``/``talker_config`` each holding a ``text_config`` and, for the
-talker, a ``code_predictor_config``). Missing required fields raise ``KeyError``
-with the full dotted path so misconfigured checkpoints fail loudly. The public
-MLX checkpoint omits the standard 48-by-48 vision position-table size, so that
-single Transformers default is restored explicitly.
-"""
+"""Native MLX configuration parser for Qwen3-Omni."""
 
 from __future__ import annotations
 
@@ -25,12 +17,7 @@ def _require(raw: Mapping[str, Any], key: str, path: str) -> Any:
 
 
 def _require_expert_count(raw: Mapping[str, Any], path: str) -> int:
-    """Resolve the MoE expert count under either canonical or alias name.
-
-    The thinker text config stores ``num_experts`` directly, while the talker
-    text config serializes it under the ``num_local_experts`` alias (Transformers
-    ``attribute_map``). Both normalize to ``num_experts`` here.
-    """
+    """Resolve the MoE expert count under either canonical or alias name."""
 
     if "num_experts" in raw:
         return int(raw["num_experts"])
@@ -40,14 +27,7 @@ def _require_expert_count(raw: Mapping[str, Any], path: str) -> int:
 
 
 def _rope_container(raw: Mapping[str, Any]) -> Mapping[str, Any]:
-    """Return the rope sub-dict under either the normalized or legacy key.
-
-    Transformers 5.12.1 normalizes rope into a single ``rope_parameters`` dict
-    (holding ``rope_type``/``rope_theta``/``mrope_section``). Published
-    checkpoints instead store a ``rope_scaling`` dict (``rope_type`` +
-    ``mrope_section``) alongside a *sibling* ``rope_theta``. A native parser
-    reading ``config.json`` directly must accept both.
-    """
+    """Return the rope sub-dict under either the normalized or legacy key."""
 
     normalized = raw.get("rope_parameters")
     if normalized is not None:
@@ -70,12 +50,7 @@ def _require_rope_theta(raw: Mapping[str, Any], path: str) -> float:
 
 
 def _require_mrope_section(raw: Mapping[str, Any], path: str) -> tuple[int, ...]:
-    """Read the required ``mrope_section`` from either rope layout.
-
-    ``mrope_section`` is mandatory for the M-RoPE text stacks; it must never
-    silently default to ``None``. A config missing it under both rope layouts
-    raises naming the full dotted path.
-    """
+    """Read the required ``mrope_section`` from either rope layout."""
 
     rope = _rope_container(raw)
     mrope = rope.get("mrope_section")
@@ -122,7 +97,6 @@ class MoeTextConfig:
     shared_expert_intermediate_size: int | None
     # Published Qwen3-Omni thinker/talker configs set this false, but it must be
     # parsed rather than assumed: a true value adds q/k/v/o projection biases,
-    # which a strict weight load would otherwise reject with a key error.
     attention_bias: bool = False
 
     @classmethod
@@ -411,9 +385,6 @@ class TalkerConfig:
     num_code_groups: int
     # The thinker hidden size the talker's resize MLPs (``text_projection`` /
     # ``hidden_projection``) consume. Published Qwen3-Omni configs serialize it
-    # on ``talker_config`` itself; it stays optional so a config that predates
-    # the field still parses, and the caller then falls back to the parsed
-    # thinker text hidden size.
     thinker_hidden_size: int | None = None
 
     @classmethod
@@ -430,8 +401,6 @@ class TalkerConfig:
         )
         # The talker embeds group 0 with its own codec table and delegates the
         # remaining groups to the predictor's per-group tables and heads, so a
-        # disagreement here would silently build a talker that emits a
-        # different number of codes than code2wav's quantizer count expects.
         if num_code_groups != predictor.num_code_groups:
             raise ValueError(
                 f"{path}.num_code_groups={num_code_groups} disagrees with "
@@ -451,13 +420,7 @@ class TalkerConfig:
 
 @dataclass(frozen=True)
 class QuantizationConfig:
-    """Quantization metadata carried by a converted MLX checkpoint.
-
-    ``bits`` and ``group_size`` are parsed from the checkpoint's ``quantization``
-    block so the pre-load quantization path is driven by real configuration
-    rather than hard-coded literals. ``mode`` defaults to affine (the only mode
-    the converter currently emits).
-    """
+    """Quantization metadata carried by a converted MLX checkpoint."""
 
     bits: int
     group_size: int

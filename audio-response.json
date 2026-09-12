@@ -1,0 +1,1 @@
+{"id":"chatcmpl-98c6debe-e45b-44b5-ae22-6fb85c499b71","object":"chat.completion","created":1789222703,"model":"qwen3-omni","choices":[{"index":0,"message":{"role":"assistant","content":"A person is walking through a forest."},"finish_reason":"stop"}],"usage":{"prompt_tokens":76,"completion_tokens":9,"total_tokens":85}}
