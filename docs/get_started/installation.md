@@ -58,7 +58,7 @@ uv pip install --prerelease=allow "sglang-omni==0.1.5"
 From a checkout of this branch, run:
 
 ```bash
-SGLANG_OMNI_EXTRAS=mlx ./install.sh
+./install.sh
 source .venv-apple/bin/activate
 ```
 
@@ -87,70 +87,11 @@ defaults with `UV_HTTP_TIMEOUT` and `UV_HTTP_RETRIES`.
 
 This path currently supports macOS 14 or newer on `arm64` only (the pinned
 `torch==2.13.0`, `torchvision==0.28.0` and `torchcodec==0.15.0` wheels are built
-for `macosx_14_0_arm64`) and is intended for Qwen3-Omni's native MLX path and
-Qwen3-ASR's existing MLX/Torch-MPS paths. Other platforms should use the
+for `macosx_14_0_arm64`) and is intended for the Apple-Silicon Qwen3-ASR
+MLX/Torch-MPS paths. Other platforms should use the
 Docker, manual, or Intel XPU instructions below. Common failures are a missing
 Homebrew/uv on `PATH`, an unavailable Python 3.12 toolchain, or forgetting the
 `DYLD_LIBRARY_PATH` export when starting an audio server.
-
-The `mlx` extra selects Qwen3-Omni's native MLX requirements
-(`mlx>=0.32.2`, `mlx-lm>=0.31.2`); `mlx-vlm` is not required. The root
-`pyproject.toml` remains the installation manifest.
-[`pyproject_apple.toml`](../../pyproject_apple.toml) is a reference profile,
-not an installer input: do not copy it over `pyproject.toml`. There is no
-separate `scripts/apple/install_apple.sh` or checkpoint-preparation step.
-
-### Reuse an existing MLX environment without modifying it
-
-Skip the installer if a compatible environment already exists. From this
-checkout, point Python at the checkout instead of changing shared editable
-installs:
-
-```bash
-export PY="/absolute/path/to/existing-mlx-venv/bin/python"
-export SGLANG_SOURCE="/absolute/path/to/compatible-sglang/python"
-export PYTHONPATH="$PWD:$SGLANG_SOURCE${PYTHONPATH:+:$PYTHONPATH}"
-"$PY" -m sglang_omni.cli serve --help
-```
-
-The environment must already provide the runtime dependencies. Prepending
-compatible SGLang source also overrides an older editable install without
-modifying it. Current main requires
-`sglang/srt/arg_groups/model_override_base.py`; a checkout missing that module
-is too old. This bypasses dependency installation, not compatibility checks.
-The root manifest retains main's `sglang==0.5.19` pin, but that wheel is not
-available on the package index used for this port. Use the supplied environment
-and compatible local source override below rather than downgrading the root
-pin or attempting to replace the shared environment's SGLang installation.
-
-For Qwen3-Omni INT4, set `MODEL_DIR` to the complete downloaded checkpoint
-directory containing `config.json`, processor assets, and **all** safetensor
-shards. A Hub snapshot containing only configuration is not sufficient.
-No copy, conversion, or dense code2wav sidecar is required:
-
-```bash
-SGLANG_USE_MLX=1 HF_HUB_OFFLINE=1 "$PY" -m sglang_omni.cli serve \
-  --model-path "$MODEL_DIR" --host 127.0.0.1 --port 8008
-```
-
-Add `--text-only` to skip speech generation. See the
-[Qwen3-Omni usage guide](../basic_usage/qwen3_omni.md#apple-silicon-mlx)
-for the pinned checkpoint and runtime restrictions.
-
-For the local sibling-checkout layout used by this port:
-
-```bash
-export PY="$PWD/../sglang-fork diff/.venv-mlx-dev/bin/python"
-export SGLANG_SOURCE="$PWD/../sglang-core-ai/python"
-export PYTHONPATH="$PWD:$SGLANG_SOURCE"
-export MODEL_DIR="$HOME/models/Qwen3-Omni-30B-A3B-Instruct-4bit-93b3cbdd"
-SGLANG_USE_MLX=1 HF_HUB_OFFLINE=1 "$PY" -m sglang_omni.cli serve \
-  --model-path "$MODEL_DIR" --host 127.0.0.1 --port 8008
-```
-
-Run this from the repository root. The virtualenv's original editable SGLang
-checkout is too old for this port; `sglang-core-ai/python` supplies the
-compatible source without modifying either shared checkout or environment.
 
 ### Run from a hosted installer
 
