@@ -47,6 +47,47 @@ sgl-omni serve \
   --port 8000
 ```
 
+## Apple Silicon
+
+On Apple Silicon, install the optional
+Fun-CosyVoice3 extra with the repository installer, then expose Homebrew's
+keg-only FFmpeg libraries to TorchCodec:
+
+```bash
+brew install sox
+SGLANG_OMNI_EXTRAS=fun-cosyvoice3 ./install.sh
+source .venv-apple/bin/activate
+export DYLD_LIBRARY_PATH="$(brew --prefix ffmpeg@7)/lib${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
+```
+
+Keep the official checkpoint as `--model-path`; it supplies the ONNX
+preprocessing assets. The MLX path additionally needs the converted speech
+model artifact, which contains the Qwen2, Flow, and HiFT weights. `mlx-audio`
+is not a runtime dependency.
+
+### MLX
+
+```bash
+SGLANG_USE_MLX=1 sgl-omni serve \
+  --model-path FunAudioLLM/Fun-CosyVoice3-0.5B-2512 \
+  --tts-engine.factory.mlx_model_path \
+    mlx-community/Fun-CosyVoice3-0.5B-2512-4bit \
+  --tts-engine.engine.quantization mlx_q4 \
+  --port 8000
+```
+
+### Torch/MPS
+
+Without `SGLANG_USE_MLX=1`, the same model runs through PyTorch MPS and does
+not need a converted MLX artifact:
+
+```bash
+unset SGLANG_USE_MLX
+sgl-omni serve \
+  --model-path FunAudioLLM/Fun-CosyVoice3-0.5B-2512 \
+  --port 8000
+```
+
 
 ## Synthesizing Speech
 
@@ -224,7 +265,7 @@ On the other hand, decrease the admission budget to reduce latency and lower pea
 
 ### Vocoder Configuration
 
-Vocoder configuration controls batching, precision, and acceleration. The scheduler accepts `max_batch_size` (16) and `max_batch_wait_ms` (30) to tune batch assembly. Flow uses `dtype` (bfloat16) for autocast, while HiFT uses `hift_dtype` (float32), independent of Flow; bfloat16 shows no speedup on H200 and reduces fidelity. Two mutually exclusive accelerators are available: `enable_dit_torch_compile` and `enable_flow_estimator_trt`.
+Vocoder configuration controls batching, precision, and acceleration. The scheduler accepts `max_batch_size` (16) and `max_batch_wait_ms` (30) to tune batch assembly. Flow uses `dtype` (bfloat16) for autocast, while HiFT uses `hift_dtype` (float32), independent of Flow; bfloat16 shows no speedup on H200 and reduces fidelity. Buffered Flow CUDA Graphs are on by default. `enable_dit_torch_compile` and `enable_flow_estimator_trt` stay opt-in and mutually exclusive.
 
 The TTS engine stage accepts `onnx_intra_op_threads` (16) for the speech tokenizer and speaker encoder ONNX sessions. Preprocessing takes `max_concurrency` (8) to limit concurrent reference conditioning requests.
 
