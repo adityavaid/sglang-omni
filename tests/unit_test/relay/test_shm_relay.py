@@ -78,3 +78,16 @@ def test_shm_raw_tensor_roundtrip_ignores_allocation_padding(monkeypatch) -> Non
             await put.wait_for_completion()
 
     asyncio.run(run())
+
+
+def test_shm_round_trips_zero_byte_tensor() -> None:
+    async def scenario() -> None:
+        relay = ShmRelay(engine_id="e", device="cpu")
+        put = await relay.put_async(torch.empty(0, dtype=torch.long), request_id="r0")
+        assert put.metadata["transfer_info"]["size"] == 0
+        dest = torch.empty(0, dtype=torch.long)
+        get = await relay.get_async(put.metadata, dest)
+        await get.wait_for_completion(timeout=1.0)
+        assert dest.numel() == 0
+
+    asyncio.run(scenario())
