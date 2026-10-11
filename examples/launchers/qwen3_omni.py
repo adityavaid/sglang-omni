@@ -230,6 +230,7 @@ def launch_qwen_text_server(args: argparse.Namespace) -> None:
         port=args.port,
         model_name=args.model_name,
         enable_realtime=args.enable_realtime,
+        skip_server_warmup=args.skip_server_warmup,
     )
 
 
@@ -578,6 +579,7 @@ def launch_qwen_speech_server(args: argparse.Namespace) -> None:
         port=args.port,
         model_name=args.model_name,
         enable_realtime=args.enable_realtime,
+        skip_server_warmup=args.skip_server_warmup,
     )
 
 
