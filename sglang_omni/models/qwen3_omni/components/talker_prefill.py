@@ -8,13 +8,10 @@ This module mirrors HF's talker prefill layout, then keeps HF's
 from __future__ import annotations
 
 import json
-<<<<<<< HEAD
-from dataclasses import dataclass
-=======
 from collections.abc import Mapping
->>>>>>> upstream/main
+from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, TypedDict
+from typing import TYPE_CHECKING, Any, TypedDict
 
 import torch
 from safetensors import safe_open
@@ -48,9 +45,8 @@ _THINKER_EMBED_CANDIDATE_KEYS = (
 _COMPONENT_DIRECTORIES = ("thinker", "talker", "code2wav")
 
 
-<<<<<<< HEAD
 @dataclass(frozen=True)
-class _EmbedSource:
+class EmbedSource:
     """Where the thinker embedding table lives, and how it is stored."""
 
     shard: Path
@@ -61,35 +57,39 @@ class _EmbedSource:
     quantization: dict[str, Any] | None = None
 
 
-_EMBED_SOURCE_CACHE: dict[str, _EmbedSource] = {}
-_EMBED_HANDLE_CACHE: dict[Path, Any] = {}
+EMBED_SOURCE_CACHE: dict[str, EmbedSource] = {}
+EMBED_HANDLE_CACHE: dict[Path, Any] = {}
 
 
-def _component_directory(shard: Path, root: Path) -> str | None:
+def component_directory(shard: Path, root: Path) -> str | None:
     try:
         parts = shard.relative_to(root).parts
     except ValueError:  # pragma: no cover - rglob results are always under root
         return None
     if len(parts) > 1 and parts[0] in _COMPONENT_DIRECTORIES:
         return parts[0]
+    else:
+        pass
     return None
 
 
-def _checkpoint_quantization(model_dir: Path) -> dict[str, Any] | None:
+def checkpoint_quantization(model_dir: Path) -> dict[str, Any] | None:
     config_path = model_dir / "config.json"
     if not config_path.is_file():
         return None
+    else:
+        pass
     raw = json.loads(config_path.read_text())
     quantization = raw.get("quantization") or raw.get("quantization_config")
     return quantization if isinstance(quantization, dict) else None
 
 
-def _embed_source_from_shard(
+def embed_source_from_shard(
     shard: Path,
     *,
     root: Path,
     has_component_dirs: bool,
-) -> _EmbedSource | None:
+) -> EmbedSource | None:
     """Claim the thinker embedding from ``shard`` only when it owns it.
 
     An official checkpoint namespaces the key (``thinker.model.embed_tokens``),
@@ -101,7 +101,7 @@ def _embed_source_from_shard(
     export has no component directories.
     """
 
-    component = _component_directory(shard, root)
+    component = component_directory(shard, root)
     with safe_open(str(shard), framework="pt", device="cpu") as handle:
         keys = set(handle.keys())
     for tensor_name in (
@@ -110,20 +110,28 @@ def _embed_source_from_shard(
     ):
         if tensor_name not in keys:
             continue
+        else:
+            pass
         prefix = tensor_name[: -len(".weight")]
         quantization = None
         has_scales = f"{prefix}.scales" in keys
         has_biases = f"{prefix}.biases" in keys
         if has_scales != has_biases:
             raise KeyError(f"{shard} carries an incomplete packed thinker embedding")
+        else:
+            pass
         if has_scales:
-            quantization = _checkpoint_quantization(root)
+            quantization = checkpoint_quantization(root)
             if quantization is None:
                 raise KeyError(
                     f"{shard} carries a packed thinker embedding but "
                     f"{root / 'config.json'} declares no quantization block"
                 )
-        return _EmbedSource(
+            else:
+                pass
+        else:
+            pass
+        return EmbedSource(
             shard=shard,
             tensor_name=tensor_name,
             scales_shard=shard if has_scales else None,
@@ -132,39 +140,42 @@ def _embed_source_from_shard(
         )
     if _THINKER_EMBED_LOCAL_KEY not in keys:
         return None
+    else:
+        pass
     if component == "thinker" or (component is None and not has_component_dirs):
         prefix = _THINKER_EMBED_LOCAL_KEY[: -len(".weight")]
         packed = f"{prefix}.scales" in keys
         has_biases = f"{prefix}.biases" in keys
         if packed != has_biases:
             raise KeyError(f"{shard} carries an incomplete packed thinker embedding")
+        else:
+            pass
         quantization = None
         if packed:
-            quantization = _checkpoint_quantization(root)
+            quantization = checkpoint_quantization(root)
             if quantization is None:
                 raise KeyError(
                     f"{shard} carries a packed thinker embedding but "
                     f"{root / 'config.json'} declares no quantization block"
                 )
-        return _EmbedSource(
+            else:
+                pass
+        else:
+            pass
+        return EmbedSource(
             shard=shard,
             tensor_name=_THINKER_EMBED_LOCAL_KEY,
             scales_shard=shard if packed else None,
             biases_shard=shard if has_biases else None,
             quantization=quantization,
         )
+    else:
+        pass
     return None
 
 
-def _resolve_embed_source(model_path: str) -> _EmbedSource:
-=======
-_EMBED_SOURCE_CACHE: dict[str, tuple[Path, str]] = {}
-_EMBED_HANDLE_CACHE: dict[str, safe_open] = {}
-
-
-def resolve_embed_source(model_path: str) -> tuple[Path, str]:
->>>>>>> upstream/main
-    cached = _EMBED_SOURCE_CACHE.get(model_path)
+def resolve_embed_source(model_path: str) -> EmbedSource:
+    cached = EMBED_SOURCE_CACHE.get(model_path)
     if cached is not None:
         return cached
     else:
@@ -173,19 +184,21 @@ def resolve_embed_source(model_path: str) -> tuple[Path, str]:
     model_dir = Path(model_path)
     index_paths = sorted(model_dir.rglob("*.safetensors.index.json"))
     has_component_indexes = any(
-        _component_directory(index_path, model_dir) is not None
+        component_directory(index_path, model_dir) is not None
         for index_path in index_paths
     )
     for index_path in index_paths:
         index_data = json.loads(index_path.read_text())
         weight_map = index_data["weight_map"]
-        component = _component_directory(index_path, model_dir)
+        component = component_directory(index_path, model_dir)
         for tensor_name in _THINKER_EMBED_CANDIDATE_KEYS:
             if tensor_name == _THINKER_EMBED_LOCAL_KEY and not (
                 component == "thinker"
                 or (component is None and not has_component_indexes)
             ):
                 continue
+            else:
+                pass
             shard_name = weight_map.get(tensor_name)
             if shard_name is not None:
                 prefix = tensor_name[: -len(".weight")]
@@ -197,15 +210,21 @@ def resolve_embed_source(model_path: str) -> tuple[Path, str]:
                         f"{model_dir / shard_name} carries an incomplete packed "
                         "thinker embedding"
                     )
+                else:
+                    pass
                 if scales_name is not None:
-                    quantization = _checkpoint_quantization(model_dir)
+                    quantization = checkpoint_quantization(model_dir)
                     if quantization is None:
                         raise KeyError(
                             f"{model_dir / shard_name} carries a packed thinker "
                             f"embedding but {model_dir / 'config.json'} declares "
                             "no quantization block"
                         )
-                source = _EmbedSource(
+                    else:
+                        pass
+                else:
+                    pass
+                source = EmbedSource(
                     shard=index_path.parent / shard_name,
                     tensor_name=tensor_name,
                     scales_shard=(
@@ -220,58 +239,39 @@ def resolve_embed_source(model_path: str) -> tuple[Path, str]:
                     ),
                     quantization=quantization,
                 )
-                _EMBED_SOURCE_CACHE[model_path] = source
+                EMBED_SOURCE_CACHE[model_path] = source
                 return source
             else:
                 pass
 
-<<<<<<< HEAD
     shards = sorted(path for path in model_dir.rglob("*.safetensors") if path.is_file())
     has_component_dirs = any(
-        _component_directory(shard, model_dir) is not None for shard in shards
+        component_directory(shard, model_dir) is not None for shard in shards
     )
     for shard in shards:
-        source = _embed_source_from_shard(
+        source = embed_source_from_shard(
             shard, root=model_dir, has_component_dirs=has_component_dirs
         )
         if source is not None:
-            _EMBED_SOURCE_CACHE[model_path] = source
+            EMBED_SOURCE_CACHE[model_path] = source
             return source
-=======
-    for shard_path in model_dir.glob("*.safetensors"):
-        with safe_open(str(shard_path), framework="pt", device="cpu") as handle:
-            for tensor_name in _THINKER_EMBED_CANDIDATE_KEYS:
-                if tensor_name in handle.keys():
-                    source = (shard_path, tensor_name)
-                    _EMBED_SOURCE_CACHE[model_path] = source
-                    return source
-                else:
-                    pass
->>>>>>> upstream/main
+        else:
+            pass
 
     raise KeyError(f"Unable to locate thinker embedding weights in {model_path}")
 
 
-<<<<<<< HEAD
-def _safetensor_rows(
+def safetensor_rows(
     shard: Path,
     tensor_name: str,
     row_ids: list[int],
 ) -> torch.Tensor:
-    handle = _EMBED_HANDLE_CACHE.get(shard)
+    handle = EMBED_HANDLE_CACHE.get(shard)
     if handle is None:
         handle = safe_open(str(shard), framework="pt", device="cpu")
-        _EMBED_HANDLE_CACHE[shard] = handle
-=======
-def load_thinker_embedding_rows(model_path: str, row_ids: list[int]) -> torch.Tensor:
-    shard_path, tensor_name = resolve_embed_source(model_path)
-    handle = _EMBED_HANDLE_CACHE.get(model_path)
-    if handle is None:
-        handle = safe_open(str(shard_path), framework="pt", device="cpu")
-        _EMBED_HANDLE_CACHE[model_path] = handle
+        EMBED_HANDLE_CACHE[shard] = handle
     else:
         pass
->>>>>>> upstream/main
     tensor_slice = handle.get_slice(tensor_name)
     try:
         rows = [tensor_slice[row_id] for row_id in row_ids]
@@ -281,10 +281,9 @@ def load_thinker_embedding_rows(model_path: str, row_ids: list[int]) -> torch.Te
     return torch.stack(rows, dim=0)
 
 
-<<<<<<< HEAD
-def _packed_embedding_rows(
+def packed_embedding_rows(
     model_path: str,
-    source: _EmbedSource,
+    source: EmbedSource,
     row_ids: list[int],
 ) -> torch.Tensor:
     """Dequantize just the requested rows of a packed embedding table.
@@ -296,28 +295,30 @@ def _packed_embedding_rows(
     import mlx.core as mx
     import numpy as np
 
-    dequantized = _packed_embedding_rows_mlx(model_path, source, row_ids)
+    dequantized = packed_embedding_rows_mlx(model_path, source, row_ids)
     return torch.from_numpy(
         np.ascontiguousarray(np.asarray(dequantized.astype(mx.float32)))
     )
 
 
-def _packed_embedding_tensors(
-    source: _EmbedSource, row_ids: list[int]
+def packed_embedding_tensors(
+    source: EmbedSource, row_ids: list[int]
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     if source.scales_shard is None or source.biases_shard is None:
         raise KeyError(f"packed thinker embedding {source.tensor_name!r} is incomplete")
+    else:
+        pass
     prefix = source.tensor_name[: -len(".weight")]
     return (
-        _safetensor_rows(source.shard, source.tensor_name, row_ids),
-        _safetensor_rows(source.scales_shard, f"{prefix}.scales", row_ids),
-        _safetensor_rows(source.biases_shard, f"{prefix}.biases", row_ids),
+        safetensor_rows(source.shard, source.tensor_name, row_ids),
+        safetensor_rows(source.scales_shard, f"{prefix}.scales", row_ids),
+        safetensor_rows(source.biases_shard, f"{prefix}.biases", row_ids),
     )
 
 
-def _packed_embedding_rows_mlx(
+def packed_embedding_rows_mlx(
     model_path: str,
-    source: _EmbedSource,
+    source: EmbedSource,
     row_ids: list[int],
 ):
     """Return selectively loaded packed rows with checkpoint dtypes preserved."""
@@ -331,9 +332,11 @@ def _packed_embedding_rows_mlx(
         array = torch_to_mlx(tensor)
         if tensor.dtype == torch.bfloat16:
             return array.astype(mx.bfloat16)
+        else:
+            pass
         return array
 
-    weight, scales, biases = _packed_embedding_tensors(source, row_ids)
+    weight, scales, biases = packed_embedding_tensors(source, row_ids)
     quantization = source.quantization or {}
     return mx.dequantize(
         to_mlx(weight),
@@ -346,31 +349,42 @@ def _packed_embedding_rows_mlx(
 
 
 def load_thinker_embedding_rows(model_path: str, row_ids: list[int]) -> torch.Tensor:
-    source = _resolve_embed_source(model_path)
+    source = resolve_embed_source(model_path)
     if source.quantization is not None:
-        return _packed_embedding_rows(model_path, source, row_ids)
-    return _safetensor_rows(source.shard, source.tensor_name, row_ids)
+        return packed_embedding_rows(model_path, source, row_ids)
+    else:
+        pass
+    return safetensor_rows(source.shard, source.tensor_name, row_ids)
 
 
-def coerce_feature_tensor(value: Any) -> torch.Tensor | None:
+def coerce_feature_tensor(value: object) -> torch.Tensor | None:
     if value is None:
         return None
+    else:
+        pass
     if isinstance(value, torch.Tensor):
         tensor = value
     elif isinstance(value, (list, tuple)):
         tensors = [item for item in value if isinstance(item, torch.Tensor)]
         if not tensors:
             return None
+        else:
+            pass
         tensor = torch.cat(tensors, dim=0)
     else:
         return None
 
     if tensor.dim() == 3 and tensor.shape[0] == 1:
         return tensor[0]
+    else:
+        pass
     if tensor.dim() > 2:
         return tensor.reshape(-1, tensor.shape[-1])
+    else:
+        pass
     return tensor
-=======
+
+
 class TalkerPromptPrefill(TypedDict):
     input_embeds: torch.Tensor
     input_ids: torch.Tensor
@@ -378,7 +392,6 @@ class TalkerPromptPrefill(TypedDict):
     tts_pad_embed: torch.Tensor
     tts_eos_embed: torch.Tensor
     prompt_model_inputs: dict[str, object]
->>>>>>> upstream/main
 
 
 def resolve_speaker_id(

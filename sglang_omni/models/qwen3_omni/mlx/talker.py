@@ -68,11 +68,17 @@ def build_suppress_mask(vocab_size: int, suppress_tokens: Iterable[int]) -> mx.a
     invalid = [token_id for token_id in unique if not 0 <= token_id < vocab_size]
     if invalid:
         raise ValueError(f"suppress token ids {invalid} are outside [0, {vocab_size})")
+    else:
+        pass
     if len(unique) >= vocab_size:
         raise ValueError("refusing to suppress every token of the codec vocabulary")
+    else:
+        pass
     mask = mx.zeros((vocab_size,), dtype=mx.float32)
     if unique:
         mask[mx.array(unique, dtype=mx.int32)] = mx.array(-math.inf, dtype=mx.float32)
+    else:
+        pass
     return mask
 
 
@@ -83,6 +89,8 @@ def mask_suppressed_logits(
 
     if suppress is None:
         return logits
+    else:
+        pass
     vocab_size = logits.shape[-1]
     if isinstance(suppress, mx.array):
         if suppress.shape != (vocab_size,):
@@ -90,10 +98,14 @@ def mask_suppressed_logits(
                 f"suppress mask shape {suppress.shape} does not match the codec "
                 f"vocabulary ({vocab_size},)"
             )
+        else:
+            pass
         mask = suppress
     else:
         if len(suppress) == 0:
             return logits
+        else:
+            pass
         mask = build_suppress_mask(vocab_size, suppress)
     return logits + mask.astype(logits.dtype)
 
@@ -144,8 +156,8 @@ class TalkerDecoderLayer(nn.Module):
         hidden_states: mx.array,
         *,
         positions: mx.array,
-        mask: Any,
-        cache: Any,
+        mask: mx.array | str | None,
+        cache: KVCache | None,
     ) -> mx.array:
         hidden_states = hidden_states + self.self_attn(
             self.input_layernorm(hidden_states),
@@ -199,7 +211,13 @@ class CodePredictorAttention(nn.Module):
         self.k_norm = nn.RMSNorm(self.head_dim, eps=config.rms_norm_eps)
         self.rope = nn.RoPE(self.head_dim, traditional=False, base=config.rope_theta)
 
-    def __call__(self, hidden_states: mx.array, *, mask: Any, cache: Any) -> mx.array:
+    def __call__(
+        self,
+        hidden_states: mx.array,
+        *,
+        mask: mx.array | str | None,
+        cache: KVCache | None,
+    ) -> mx.array:
         batch, length, _ = hidden_states.shape
 
         queries = self.q_norm(
@@ -219,6 +237,8 @@ class CodePredictorAttention(nn.Module):
         keys = self.rope(keys, offset=offset)
         if cache is not None:
             keys, values = cache.update_and_fetch(keys, values)
+        else:
+            pass
 
         attention = scaled_dot_product_attention(
             queries, keys, values, cache=cache, scale=self.scale, mask=mask
@@ -258,7 +278,13 @@ class CodePredictorDecoderLayer(nn.Module):
             config.hidden_size, eps=config.rms_norm_eps
         )
 
-    def __call__(self, hidden_states: mx.array, *, mask: Any, cache: Any) -> mx.array:
+    def __call__(
+        self,
+        hidden_states: mx.array,
+        *,
+        mask: mx.array | str | None,
+        cache: KVCache | None,
+    ) -> mx.array:
         hidden_states = hidden_states + self.self_attn(
             self.input_layernorm(hidden_states), mask=mask, cache=cache
         )
@@ -301,12 +327,12 @@ class Qwen3OmniMlxCodePredictor(nn.Module):
     def num_layers(self) -> int:
         return len(self.model.layers)
 
-    def make_cache(self) -> list[Any]:
+    def make_cache(self) -> list[KVCache]:
         """A fresh per-layer KV cache for one group expansion."""
 
         return [KVCache() for _ in range(self.num_layers)]
 
-    def _forward(self, embeddings: mx.array, *, cache: list[Any]) -> mx.array:
+    def forward(self, embeddings: mx.array, *, cache: list[KVCache]) -> mx.array:
         hidden = embeddings
         mask = create_attention_mask(hidden, cache[0])
         for index, layer in enumerate(self.model.layers):
@@ -327,6 +353,8 @@ class Qwen3OmniMlxCodePredictor(nn.Module):
             raise ValueError(
                 f"layer0_token must be [1], got shape {layer0_token.shape}"
             )
+        else:
+            pass
         for name, value in (
             ("layer0_embed", layer0_embed),
             ("talker_hidden", talker_hidden),
@@ -335,6 +363,8 @@ class Qwen3OmniMlxCodePredictor(nn.Module):
                 raise ValueError(
                     f"{name} must be [1, 1, {hidden_size}], got shape {value.shape}"
                 )
+            else:
+                pass
 
         cache = self.make_cache()
         # Upstream prefills both prompt rows in one call; the predictor's
@@ -342,7 +372,7 @@ class Qwen3OmniMlxCodePredictor(nn.Module):
         prompt = mx.concatenate(
             [talker_hidden, layer0_embed.astype(talker_hidden.dtype)], axis=1
         )
-        last_hidden = self._forward(prompt, cache=cache)[:, -1:, :]
+        last_hidden = self.forward(prompt, cache=cache)[:, -1:, :]
 
         codes = [layer0_token.reshape(1, 1).astype(mx.int32)]
         feedback = layer0_embed[:, 0, :]
@@ -355,7 +385,9 @@ class Qwen3OmniMlxCodePredictor(nn.Module):
             if group < self.num_code_groups - 2:
                 # The final group is never fed back through the stack: upstream
                 # only embeds it (``last_residual_hidden``) for the sum.
-                last_hidden = self._forward(embed, cache=cache)
+                last_hidden = self.forward(embed, cache=cache)
+            else:
+                pass
         return mx.concatenate(codes, axis=1), feedback
 
 
@@ -385,6 +417,8 @@ class Qwen3OmniMlxTalker(nn.Module):
                 "with code_predictor_config.num_code_groups="
                 f"{int(predictor_config.num_code_groups)}"
             )
+        else:
+            pass
         self.thinker_hidden_size = int(thinker_hidden_size)
         # ``attention_bias`` defaults to the value parsed from the checkpoint's
         # talker text config (false for every published Qwen3-Omni release); an
@@ -413,7 +447,7 @@ class Qwen3OmniMlxTalker(nn.Module):
 
     @classmethod
     def from_omni_config(
-        cls, config: Qwen3OmniMlxConfig, **kwargs: Any
+        cls, config: Qwen3OmniMlxConfig, **kwargs: int | bool | None
     ) -> "Qwen3OmniMlxTalker":
         """Build from the nested Omni config."""
 
@@ -426,7 +460,11 @@ class Qwen3OmniMlxTalker(nn.Module):
                     "with thinker_config.text_config.hidden_size="
                     f"{int(thinker_hidden_size)}"
                 )
+            else:
+                pass
             thinker_hidden_size = int(declared)
+        else:
+            pass
         kwargs.setdefault("thinker_hidden_size", thinker_hidden_size)
         return cls(config.talker, **kwargs)
 
@@ -444,7 +482,7 @@ class Qwen3OmniMlxTalker(nn.Module):
     def vocab_size(self) -> int:
         return self.config.text_config.vocab_size
 
-    def make_cache(self) -> list[Any]:
+    def make_cache(self) -> list[KVCache]:
         """A fresh per-layer talker KV cache; ``cache[i].offset`` counts tokens."""
 
         return [KVCache() for _ in range(self.num_layers)]
@@ -459,8 +497,12 @@ class Qwen3OmniMlxTalker(nn.Module):
         for key, value in stripped.items():
             if not key.startswith(_TALKER_PREFIXES):
                 continue
+            else:
+                pass
             if key.endswith(_DROPPED_SUFFIXES):
                 continue
+            else:
+                pass
             sanitized[key] = value
         return sanitized
 
@@ -480,32 +522,46 @@ class Qwen3OmniMlxTalker(nn.Module):
                 "input_embeddings must be [batch, sequence, hidden], got shape "
                 f"{input_embeddings.shape}"
             )
+        else:
+            pass
         if input_embeddings.shape[-1] != self.thinker_hidden_size:
             raise ValueError(
                 f"unprojected prompt rows must carry the thinker hidden size "
                 f"{self.thinker_hidden_size}, got {input_embeddings.shape[-1]}"
             )
+        else:
+            pass
         projected = self.text_projection(input_embeddings)
         if multimodal_mask is None:
             if multimodal_hidden is not None:
                 raise ValueError(
                     "multimodal_hidden requires a multimodal_mask selecting its rows"
                 )
+            else:
+                pass
             return projected
+        else:
+            pass
         if multimodal_hidden is None:
             raise ValueError(
                 "multimodal_mask requires multimodal_hidden rows to project"
             )
+        else:
+            pass
         if multimodal_hidden.shape != input_embeddings.shape:
             raise ValueError(
                 f"multimodal_hidden shape {multimodal_hidden.shape} does not match "
                 f"input_embeddings shape {input_embeddings.shape}"
             )
+        else:
+            pass
         if multimodal_mask.shape != input_embeddings.shape[:2]:
             raise ValueError(
                 f"multimodal_mask shape {multimodal_mask.shape} does not match "
                 f"[batch, sequence] {input_embeddings.shape[:2]}"
             )
+        else:
+            pass
         return mx.where(
             multimodal_mask[..., None],
             self.hidden_projection(multimodal_hidden),
@@ -514,34 +570,44 @@ class Qwen3OmniMlxTalker(nn.Module):
 
     # -- forward -----------------------------------------------------------
 
-    def _validate_step(self, embeddings: mx.array, positions: mx.array) -> None:
+    def validate_step(self, embeddings: mx.array, positions: mx.array) -> None:
         hidden_size = self.config.text_config.hidden_size
         if embeddings.ndim != 3:
             raise ValueError(
                 f"embeddings must be [batch, sequence, hidden], got {embeddings.shape}"
             )
+        else:
+            pass
         if embeddings.shape[0] != 1:
             raise ValueError(
                 "the MLX talker serves one request at a time, got batch "
                 f"{embeddings.shape[0]}"
             )
+        else:
+            pass
         if embeddings.shape[-1] != hidden_size:
             raise ValueError(
                 f"projected rows must carry the talker hidden size {hidden_size}, "
                 f"got {embeddings.shape[-1]}"
             )
+        else:
+            pass
         if positions.ndim != 2 or positions.shape[0] != 3:
             raise ValueError(
                 f"mrope_positions must be [3, sequence], got {positions.shape}"
             )
+        else:
+            pass
         if positions.shape[1] != embeddings.shape[1]:
             raise ValueError(
                 f"mrope_positions covers {positions.shape[1]} tokens but the step "
                 f"holds {embeddings.shape[1]}"
             )
+        else:
+            pass
 
-    def _run_backbone(
-        self, embeddings: mx.array, *, positions: mx.array, cache: list[Any]
+    def run_backbone(
+        self, embeddings: mx.array, *, positions: mx.array, cache: list[KVCache]
     ) -> mx.array:
         hidden = embeddings
         mask = create_attention_mask(hidden, cache[0])
@@ -549,21 +615,23 @@ class Qwen3OmniMlxTalker(nn.Module):
             hidden = layer(hidden, positions=positions, mask=mask, cache=cache[index])
         return self.model.norm(hidden)
 
-    def _step(
+    def step(
         self,
         embeddings: mx.array,
         *,
         positions: mx.array,
-        cache: list[Any],
+        cache: list[KVCache],
         suppress_tokens: Sequence[int] | mx.array | None,
     ) -> MlxTalkerStep:
-        self._validate_step(embeddings, positions)
+        self.validate_step(embeddings, positions)
         if len(cache) != self.num_layers:
             raise ValueError(
                 f"cache holds {len(cache)} entries but the talker has "
                 f"{self.num_layers} layers"
             )
-        hidden = self._run_backbone(embeddings, positions=positions, cache=cache)[
+        else:
+            pass
+        hidden = self.run_backbone(embeddings, positions=positions, cache=cache)[
             :, -1:, :
         ]
         logits = mask_suppressed_logits(self.codec_head(hidden), suppress_tokens)
@@ -591,7 +659,7 @@ class Qwen3OmniMlxTalker(nn.Module):
         multimodal_hidden: mx.array | None = None,
         multimodal_mask: mx.array | None = None,
         suppress_tokens: Sequence[int] | mx.array | None = None,
-        cache: list[Any] | None = None,
+        cache: list[KVCache] | None = None,
     ) -> MlxTalkerStep:
         """Run the talker prompt and expand the first code frame."""
 
@@ -611,7 +679,9 @@ class Qwen3OmniMlxTalker(nn.Module):
                 "an already projected prompt cannot also carry multimodal rows "
                 "to project"
             )
-        return self._step(
+        else:
+            pass
+        return self.step(
             projected,
             positions=mrope_positions,
             cache=self.make_cache() if cache is None else cache,
@@ -624,7 +694,7 @@ class Qwen3OmniMlxTalker(nn.Module):
         feedback: mx.array,
         next_text_row: mx.array | None,
         mrope_positions: mx.array,
-        cache: list[Any],
+        cache: list[KVCache],
         suppress_tokens: Sequence[int] | mx.array | None = None,
     ) -> MlxTalkerStep:
         """Run one autoregressive talker step against an existing KV cache."""
@@ -635,16 +705,18 @@ class Qwen3OmniMlxTalker(nn.Module):
                 "next projected text row, or the TTS pad row once the text "
                 "queue is drained"
             )
-        row = self._as_step_row(feedback, name="feedback")
-        text = self._as_step_row(next_text_row, name="next_text_row")
-        return self._step(
+        else:
+            pass
+        row = self.as_step_row(feedback, name="feedback")
+        text = self.as_step_row(next_text_row, name="next_text_row")
+        return self.step(
             row + text,
             positions=mrope_positions,
             cache=cache,
             suppress_tokens=suppress_tokens,
         )
 
-    def _as_step_row(self, value: mx.array, *, name: str) -> mx.array:
+    def as_step_row(self, value: mx.array, *, name: str) -> mx.array:
         """Normalize a single talker-space row onto ``[1, 1, hidden]``."""
 
         hidden_size = self.config.text_config.hidden_size
@@ -652,9 +724,13 @@ class Qwen3OmniMlxTalker(nn.Module):
             value = value[None, None, :]
         elif value.ndim == 2:
             value = value[:, None, :]
+        else:
+            pass
         if value.shape != (1, 1, hidden_size):
             raise ValueError(
                 f"{name} must be one talker-space row of size {hidden_size}, got "
                 f"shape {value.shape}"
             )
+        else:
+            pass
         return value

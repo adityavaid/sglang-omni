@@ -3,12 +3,8 @@
 
 from __future__ import annotations
 
-<<<<<<< HEAD
 from pathlib import Path
 from typing import Any, ClassVar
-=======
-from typing import ClassVar
->>>>>>> upstream/main
 
 from pydantic import Field
 
@@ -341,22 +337,25 @@ class Qwen3OmniBasePipelineConfig(PipelineConfig):
         default_factory=lambda: dict(_DEEPGEMM_PRECOMPILE_ENV_DEFAULTS)
     )
 
-<<<<<<< HEAD
-    def model_post_init(self, __context: Any = None) -> None:
+    def model_post_init(self, __context: object = None) -> None:
         super().model_post_init(__context)
         from sglang_omni.models.qwen3_omni import apple_runtime
 
         if not current_platform.is_mps():
             return
+        else:
+            pass
         if not (Path(self.model_path).exists() or "/" in self.model_path):
             return
+        else:
+            pass
 
         apple_runtime.validate_qwen3_omni_apple_checkpoint(
             self.model_path,
             speech_enabled=any(stage.name == "talker_ar" for stage in self.stages),
             use_mlx=apple_runtime.qwen3_omni_uses_mlx_backend(),
         )
-=======
+
     def resolved_stage_env_defaults(self, stage_name: str) -> dict[str, str]:
         """Keep CPU-sensitive preprocessing parallel unless OMP is configured."""
         env_defaults = super().resolved_stage_env_defaults(stage_name)
@@ -365,7 +364,6 @@ class Qwen3OmniBasePipelineConfig(PipelineConfig):
         else:
             pass
         return env_defaults
->>>>>>> upstream/main
 
     @classmethod
     def topology_gated_custom_all_reduce_stages(cls) -> set[str]:
@@ -399,25 +397,21 @@ class Qwen3OmniPipelineConfig(Qwen3OmniBasePipelineConfig):
     stages: list[StageConfig] = Field(default_factory=text_stages)
 
 
-<<<<<<< HEAD
-def _default_speech_stages() -> list[StageConfig]:
+def default_speech_stages() -> list[StageConfig]:
     # Apple exposes exactly one Metal device: thinker and talker must land on
     # the same logical GPU 0 so the unchanged 7-stage speech graph is
     # constructible on real Apple hardware. Every other platform keeps its
     # original two-GPU placement.
     talker_gpu = 0 if current_platform.is_mps() else 1
-    return _speech_stages(
+    return speech_stages(
         thinker_gpu=0,
         talker_gpu=talker_gpu,
-        process_by_stage=_SPEECH_DEFAULT_PROCESSES,
+        process_by_stage=SPEECH_DEFAULT_PROCESSES,
         enable_partial_start=True,
     )
 
 
-class Qwen3OmniSpeechPipelineConfig(_Qwen3OmniBasePipelineConfig):
-=======
 class Qwen3OmniSpeechPipelineConfig(Qwen3OmniBasePipelineConfig):
->>>>>>> upstream/main
     """7-stage speech pipeline (text + audio output)."""
 
     stage_config_types: ClassVar[dict[str, type[StageConfig]]] = {
@@ -437,18 +431,7 @@ class Qwen3OmniSpeechPipelineConfig(Qwen3OmniBasePipelineConfig):
             require_memory_fraction_for_colocation=False
         )
     )
-<<<<<<< HEAD
-    stages: list[StageConfig] = Field(default_factory=_default_speech_stages)
-=======
-    stages: list[StageConfig] = Field(
-        default_factory=lambda: speech_stages(
-            thinker_gpu=0,
-            talker_gpu=1,
-            process_by_stage=SPEECH_DEFAULT_PROCESSES,
-            enable_partial_start=True,
-        )
-    )
->>>>>>> upstream/main
+    stages: list[StageConfig] = Field(default_factory=default_speech_stages)
 
     def stage_factory_kwargs(self, stage_name: str) -> dict[str, bool]:
         process_by_stage = {stage.name: stage.process for stage in self.stages}
@@ -468,19 +451,17 @@ class Qwen3OmniSpeechPipelineConfig(Qwen3OmniBasePipelineConfig):
                 "enable_cuda_graph": current_platform.enable_code2wav_graph(),
                 "talker_in_process": code2wav_shares_talker_process,
             }
-<<<<<<< HEAD
             if current_platform.is_mps():
                 # Apple's single Metal device has no CUDA events, pinned D2H
                 # overlap buffers, or graph capture; force these off at the
                 # seam that actually supplies code2wav factory arguments.
                 kwargs["enable_output_overlap"] = False
-                kwargs["enable_batching"] = False
                 kwargs["enable_cuda_graph"] = False
+            else:
+                pass
             return kwargs
-=======
         else:
             pass
->>>>>>> upstream/main
         return super().stage_factory_kwargs(stage_name)
 
 

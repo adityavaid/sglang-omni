@@ -36,7 +36,7 @@ def test_apple_backend_selection_uses_current_sglang_mlx_runtime(
     assert apple_runtime.qwen3_omni_uses_mlx_backend() is enabled
 
 
-def _set_mps(monkeypatch: pytest.MonkeyPatch, enabled: bool = True) -> None:
+def set_mps(monkeypatch: pytest.MonkeyPatch, enabled: bool = True) -> None:
     monkeypatch.setattr(
         apple_runtime.current_platform,
         "is_mps",
@@ -45,14 +45,14 @@ def _set_mps(monkeypatch: pytest.MonkeyPatch, enabled: bool = True) -> None:
 
 
 def test_apple_checkpoint_requires_native_mlx_before_loading(monkeypatch):
-    _set_mps(monkeypatch)
+    set_mps(monkeypatch)
     with pytest.raises(ValueError, match="SGLANG_USE_MLX=1"):
         apple_runtime.validate_qwen3_omni_apple_checkpoint(
             "nonexistent-checkpoint", speech_enabled=True, use_mlx=False
         )
 
 
-def _write_checkpoint_index(
+def write_checkpoint_index(
     root: Path,
     keys: list[str],
     *,
@@ -71,7 +71,7 @@ def _write_checkpoint_index(
     return root
 
 
-def _write_indexed_safetensors(
+def write_indexed_safetensors(
     directory: Path,
     tensors: dict[str, torch.Tensor],
 ) -> None:
@@ -92,7 +92,7 @@ def torch_speech_checkpoint_with_split_code2wav(tmp_path: Path) -> Path:
         json.dumps({"architectures": ["Qwen3OmniMoeForConditionalGeneration"]}),
         encoding="utf-8",
     )
-    _write_indexed_safetensors(
+    write_indexed_safetensors(
         root,
         {
             "thinker.model.layers.0.self_attn.q_proj.weight": torch.ones(1),
@@ -102,7 +102,7 @@ def torch_speech_checkpoint_with_split_code2wav(tmp_path: Path) -> Path:
             ),
         },
     )
-    _write_indexed_safetensors(
+    write_indexed_safetensors(
         root / "code2wav",
         {"pre_transformer.layers.0.input_layernorm.weight": torch.ones(1)},
     )
@@ -112,7 +112,7 @@ def torch_speech_checkpoint_with_split_code2wav(tmp_path: Path) -> Path:
 def test_apple_thinker_profile_forces_single_request_eager_execution(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _set_mps(monkeypatch)
+    set_mps(monkeypatch)
 
     actual = apple_runtime.apply_qwen3_omni_apple_profile(
         {"max_running_requests": 64, "disable_cuda_graph": False, "tp_size": 1},
@@ -134,7 +134,7 @@ def test_apple_thinker_profile_forces_single_request_eager_execution(
 def test_apple_profile_rejects_explicit_unsupported_options(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _set_mps(monkeypatch)
+    set_mps(monkeypatch)
 
     with pytest.raises(ValueError, match="tp_size=1"):
         apple_runtime.apply_qwen3_omni_apple_profile(
@@ -157,7 +157,7 @@ def test_apple_profile_rejects_explicit_unsupported_options(
 
 
 def test_non_mps_profile_is_a_pass_through(monkeypatch: pytest.MonkeyPatch) -> None:
-    _set_mps(monkeypatch, False)
+    set_mps(monkeypatch, False)
     overrides = {"tp_size": 2, "disable_cuda_graph": False}
 
     assert (
@@ -173,7 +173,7 @@ def test_non_mps_profile_is_a_pass_through(monkeypatch: pytest.MonkeyPatch) -> N
 def test_apple_thinker_factory_applies_profile_after_tp_size(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _set_mps(monkeypatch)
+    set_mps(monkeypatch)
     captured: dict[str, object] = {}
 
     class StopAfterOverrides(RuntimeError):
@@ -274,7 +274,7 @@ def test_inductor_prewarm_swallows_only_its_own_import_failure(
         calls.append(name)
         raise TypeError("unsupported operand type(s) for |: 'module' and 'type'")
 
-    monkeypatch.setattr(apple_torch_compat, "platform", _DarwinArm64Platform())
+    monkeypatch.setattr(apple_torch_compat, "platform", DarwinArm64Platform())
     monkeypatch.setattr(
         apple_torch_compat.torch.backends.mps, "is_available", lambda: True
     )
@@ -296,7 +296,7 @@ def test_inductor_prewarm_is_skipped_entirely_off_apple(
     from sglang_omni.utils import apple_torch_compat
 
     calls: list[str] = []
-    monkeypatch.setattr(apple_torch_compat, "platform", _LinuxX86Platform())
+    monkeypatch.setattr(apple_torch_compat, "platform", LinuxX86Platform())
     monkeypatch.setattr(
         apple_torch_compat, "import_module", lambda name: calls.append(name)
     )
@@ -306,7 +306,7 @@ def test_inductor_prewarm_is_skipped_entirely_off_apple(
     assert calls == []
 
 
-class _DarwinArm64Platform:
+class DarwinArm64Platform:
     @staticmethod
     def system() -> str:
         return "Darwin"
@@ -316,7 +316,7 @@ class _DarwinArm64Platform:
         return "arm64"
 
 
-class _LinuxX86Platform:
+class LinuxX86Platform:
     @staticmethod
     def system() -> str:
         return "Linux"
@@ -345,7 +345,7 @@ def test_apple_request_validation_rejects_non_greedy_options(
     params: dict[str, object],
     expected: str,
 ) -> None:
-    _set_mps(monkeypatch)
+    set_mps(monkeypatch)
 
     with pytest.raises(ValueError, match=expected):
         apple_runtime.validate_qwen3_omni_apple_request(
@@ -357,7 +357,7 @@ def test_apple_request_validation_rejects_non_greedy_options(
 def test_apple_request_validation_allows_omitted_greedy_options(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _set_mps(monkeypatch)
+    set_mps(monkeypatch)
 
     apple_runtime.validate_qwen3_omni_apple_request({}, stage_name="thinker")
     apple_runtime.validate_qwen3_omni_apple_request({}, stage_name="talker_ar")
@@ -366,7 +366,7 @@ def test_apple_request_validation_allows_omitted_greedy_options(
 def test_talker_adapter_uses_greedy_apple_defaults(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _set_mps(monkeypatch)
+    set_mps(monkeypatch)
     captured: dict[str, object] = {}
     sentinel = object()
     prefill_builder = SimpleNamespace(
@@ -380,7 +380,7 @@ def test_talker_adapter_uses_greedy_apple_defaults(
 
     monkeypatch.setattr(
         qwen_request_builders,
-        "_build_talker_request_data",
+        "build_talker_request_data",
         fake_build,
     )
     request_builder, *_ = qwen_request_builders.make_talker_scheduler_adapters(
@@ -388,7 +388,6 @@ def test_talker_adapter_uses_greedy_apple_defaults(
         codec_vocab_size=4096,
         prefill_builder=prefill_builder,
         thinker_config=SimpleNamespace(),
-        required_aux_hidden_key=24,
         codec_eos_id=7,
     )
     payload = StagePayload(
@@ -408,12 +407,12 @@ def test_checkpoint_validation_accepts_official_text_and_speech_layouts(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    _set_mps(monkeypatch)
-    text = _write_checkpoint_index(
+    set_mps(monkeypatch)
+    text = write_checkpoint_index(
         tmp_path / "text",
         ["thinker.model.layers.0.self_attn.q_proj.weight"],
     )
-    speech = _write_checkpoint_index(
+    speech = write_checkpoint_index(
         tmp_path / "speech",
         [
             "thinker.model.layers.0.self_attn.q_proj.weight",
@@ -445,9 +444,9 @@ def test_apple_pipeline_requires_mlx_before_stage_start(
     metadata_key: str,
     pipeline_cls,
 ) -> None:
-    _set_mps(monkeypatch)
+    set_mps(monkeypatch)
     monkeypatch.setattr(apple_runtime, "qwen3_omni_uses_mlx_backend", lambda: False)
-    checkpoint = _write_checkpoint_index(
+    checkpoint = write_checkpoint_index(
         tmp_path / "converted",
         [
             "thinker.model.layers.0.weight",
@@ -478,8 +477,8 @@ def test_mlx_checkpoint_accepts_packed_weights_without_quantization_config(
     indexed: bool,
     suffix: str,
 ) -> None:
-    _set_mps(monkeypatch)
-    checkpoint = _write_checkpoint_index(
+    set_mps(monkeypatch)
+    checkpoint = write_checkpoint_index(
         tmp_path / "packed", ["thinker.model.layers.0.weight"]
     )
     tensors = {
@@ -487,7 +486,7 @@ def test_mlx_checkpoint_accepts_packed_weights_without_quantization_config(
         f"thinker.model.layers.0.{suffix}": torch.ones(1),
     }
     if indexed:
-        _write_indexed_safetensors(checkpoint, tensors)
+        write_indexed_safetensors(checkpoint, tensors)
     else:
         (checkpoint / "model.safetensors.index.json").unlink()
         save_file(tensors, checkpoint / "model.safetensors")
@@ -503,7 +502,7 @@ def test_checkpoint_validation_accepts_official_root_with_indexed_split_code2wav
 ) -> None:
     from sglang_omni.models.weight_loader import load_weights_by_prefix
 
-    _set_mps(monkeypatch)
+    set_mps(monkeypatch)
 
     apple_runtime.validate_qwen3_omni_apple_checkpoint(
         str(torch_speech_checkpoint_with_split_code2wav),
@@ -524,7 +523,7 @@ def test_mlx_speech_pipeline_initializes_with_official_root_and_indexed_split_co
 ) -> None:
     from sglang.srt.hardware_backend.mlx import runtime as tensor_bridge
 
-    _set_mps(monkeypatch)
+    set_mps(monkeypatch)
     monkeypatch.setenv("SGLANG_USE_MLX", "1")
     tensor_bridge.use_mlx.cache_clear()
     try:
@@ -551,8 +550,8 @@ def test_checkpoint_validation_rejects_empty_or_unowned_split_code2wav(
     tmp_path: Path,
     weight_map: dict[str, str],
 ) -> None:
-    _set_mps(monkeypatch)
-    checkpoint = _write_checkpoint_index(
+    set_mps(monkeypatch)
+    checkpoint = write_checkpoint_index(
         tmp_path / "invalid-split",
         [
             "thinker.model.layers.0.self_attn.q_proj.weight",
@@ -579,8 +578,8 @@ def test_checkpoint_validation_accepts_language_model_thinker_layout(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    _set_mps(monkeypatch)
-    checkpoint = _write_checkpoint_index(
+    set_mps(monkeypatch)
+    checkpoint = write_checkpoint_index(
         tmp_path / "mlx-community",
         ["thinker.language_model.model.layers.0.self_attn.q_proj.weight"],
     )
@@ -596,8 +595,8 @@ def test_checkpoint_validation_accepts_quantized_root_code2wav_for_mlx_speech(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    _set_mps(monkeypatch)
-    checkpoint = _write_checkpoint_index(
+    set_mps(monkeypatch)
+    checkpoint = write_checkpoint_index(
         tmp_path / "mlx-community-speech",
         [
             "thinker.language_model.model.layers.0.self_attn.q_proj.weight",
@@ -625,8 +624,8 @@ def test_checkpoint_validation_ignores_unindexed_stale_shards(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    _set_mps(monkeypatch)
-    checkpoint = _write_checkpoint_index(
+    set_mps(monkeypatch)
+    checkpoint = write_checkpoint_index(
         tmp_path / "indexed",
         ["thinker.language_model.model.layers.0.weight"],
     )
@@ -647,7 +646,7 @@ def test_checkpoint_validation_accepts_mixed_component_storage(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    _set_mps(monkeypatch)
+    set_mps(monkeypatch)
     checkpoint = tmp_path / "mixed"
     checkpoint.mkdir()
     (checkpoint / "config.json").write_text(
@@ -693,8 +692,8 @@ def test_checkpoint_validation_ignores_directories_named_safetensors(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    _set_mps(monkeypatch)
-    checkpoint = _write_checkpoint_index(
+    set_mps(monkeypatch)
+    checkpoint = write_checkpoint_index(
         tmp_path / "indexed",
         ["thinker.language_model.model.layers.0.weight"],
     )
@@ -711,7 +710,7 @@ def test_checkpoint_validation_accepts_quantized_single_file_code2wav_layout(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    _set_mps(monkeypatch)
+    set_mps(monkeypatch)
     checkpoint = tmp_path / "single"
     checkpoint.mkdir()
     (checkpoint / "config.json").write_text(
@@ -741,7 +740,7 @@ def test_checkpoint_validation_accepts_component_local_mlx_layout(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    _set_mps(monkeypatch)
+    set_mps(monkeypatch)
     root = tmp_path / "mlx"
     (root / "config.json").parent.mkdir(parents=True)
     (root / "config.json").write_text(
@@ -775,7 +774,7 @@ def test_checkpoint_validation_rejects_unrelated_component_local_keys(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    _set_mps(monkeypatch)
+    set_mps(monkeypatch)
     root = tmp_path / "mlx-invalid"
     (root / "config.json").parent.mkdir(parents=True)
     (root / "config.json").write_text(
@@ -801,7 +800,7 @@ def test_checkpoint_validation_discovers_remote_component_indexes(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    _set_mps(monkeypatch)
+    set_mps(monkeypatch)
     root = tmp_path / "remote-cache"
     (root / "config.json").parent.mkdir(parents=True)
     (root / "config.json").write_text(
@@ -881,8 +880,8 @@ def test_checkpoint_validation_rejects_incompatible_layouts(
     speech_enabled: bool,
     expected: str,
 ) -> None:
-    _set_mps(monkeypatch)
-    path = _write_checkpoint_index(
+    set_mps(monkeypatch)
+    path = write_checkpoint_index(
         tmp_path / expected,
         keys,
         architecture=architecture,
@@ -900,7 +899,7 @@ def test_pipeline_construction_validates_real_model_paths_on_mps(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    _set_mps(monkeypatch)
+    set_mps(monkeypatch)
     observed: list[tuple[str, bool, bool]] = []
     monkeypatch.setattr(
         apple_runtime,
@@ -936,14 +935,16 @@ def test_thinker_request_accepts_several_runs_of_one_modality(
 ) -> None:
     """Two images (or two audio clips, or two videos) put two *separate* runs of"""
 
-    data = _build_apple_thinker_request(
+    data = build_apple_thinker_request(
         monkeypatch,
         input_ids=torch.tensor([token_id, token_id, 10, 11, token_id, token_id]),
         model_inputs={model_input_key: torch.ones((4, 4))},
         request_id="rid-multi",
     )
 
-    positions = data.req._omni_mm_positions[modality]
+    positions = data.req._omni_mm_positions[
+        modality
+    ]  # noqa: leading-underscore - external runtime contract
     assert positions.tolist() == [0, 1, 4, 5]
 
 
@@ -952,7 +953,7 @@ def test_thinker_request_accepts_two_images_and_two_audio_clips_together(
 ) -> None:
     """Interleaved modalities, each with more than one run, stay separable."""
 
-    data = _build_apple_thinker_request(
+    data = build_apple_thinker_request(
         monkeypatch,
         input_ids=torch.tensor([55, 10, 77, 11, 55, 12, 77]),
         model_inputs={
@@ -962,7 +963,9 @@ def test_thinker_request_accepts_two_images_and_two_audio_clips_together(
         request_id="rid-mixed",
     )
 
-    positions = data.req._omni_mm_positions
+    positions = (
+        data.req._omni_mm_positions
+    )  # noqa: leading-underscore - external runtime contract
     assert positions["image"].tolist() == [0, 4]
     assert positions["audio"].tolist() == [2, 6]
     assert positions["video"].tolist() == []
@@ -989,7 +992,7 @@ def test_thinker_request_rejects_a_modality_row_count_mismatch(
         ValueError,
         match=rf"{modality}.*rid-mismatch.*placeholders=2 encoder rows=3",
     ):
-        _build_apple_thinker_request(
+        build_apple_thinker_request(
             monkeypatch,
             input_ids=torch.tensor([token_id, 10, token_id]),
             model_inputs={model_input_key: torch.ones((3, 4))},
@@ -1019,7 +1022,7 @@ def test_thinker_request_rejects_placeholders_without_encoder_rows(
         ValueError,
         match=rf"{modality}.*rid-missing.*placeholders=1 encoder rows=0",
     ):
-        _build_apple_thinker_request(
+        build_apple_thinker_request(
             monkeypatch,
             input_ids=torch.tensor([token_id, 10]),
             model_inputs={},
@@ -1046,7 +1049,7 @@ def test_thinker_request_rejects_encoder_rows_without_placeholders(
         ValueError,
         match=rf"{modality}.*rid-orphan.*placeholders=0 encoder rows=2",
     ):
-        _build_apple_thinker_request(
+        build_apple_thinker_request(
             monkeypatch,
             input_ids=torch.tensor([10, 11]),
             model_inputs={model_input_key: torch.ones((2, 4))},
@@ -1060,14 +1063,18 @@ def test_thinker_request_counts_chunked_encoder_rows(
     """Encoder merges may concatenate list-valued rows, so the count
     check has to sum the chunks rather than look at the first one."""
 
-    data = _build_apple_thinker_request(
+    data = build_apple_thinker_request(
         monkeypatch,
         input_ids=torch.tensor([55, 10, 55, 55]),
         model_inputs={"image_embeds": [torch.ones((1, 4)), torch.ones((2, 4))]},
         request_id="rid-chunked",
     )
 
-    assert data.req._omni_mm_positions["image"].tolist() == [0, 2, 3]
+    assert data.req._omni_mm_positions["image"].tolist() == [
+        0,
+        2,
+        3,
+    ]  # noqa: leading-underscore - external runtime contract
 
 
 def test_non_apple_thinker_request_skips_modality_count_validation(
@@ -1076,7 +1083,7 @@ def test_non_apple_thinker_request_skips_modality_count_validation(
     """Positive pairing for the guards above: off Apple the CUDA thinker owns
     this contract, so the request builder must stay a pass-through."""
 
-    data = _build_apple_thinker_request(
+    data = build_apple_thinker_request(
         monkeypatch,
         input_ids=torch.tensor([55, 10, 55]),
         model_inputs={"image_embeds": torch.ones((3, 4))},
@@ -1084,10 +1091,13 @@ def test_non_apple_thinker_request_skips_modality_count_validation(
         apple=False,
     )
 
-    assert data.req._omni_mm_positions["image"].tolist() == [0, 2]
+    assert data.req._omni_mm_positions["image"].tolist() == [
+        0,
+        2,
+    ]  # noqa: leading-underscore - external runtime contract
 
 
-def _build_apple_thinker_request(
+def build_apple_thinker_request(
     monkeypatch: pytest.MonkeyPatch,
     *,
     input_ids: torch.Tensor,
@@ -1095,7 +1105,7 @@ def _build_apple_thinker_request(
     request_id: str,
     apple: bool = True,
 ):
-    _set_mps(monkeypatch, apple)
+    set_mps(monkeypatch, apple)
     monkeypatch.setattr(
         "sglang.srt.sampling.sampling_params.SamplingParams.normalize",
         lambda self, tokenizer: None,
@@ -1105,7 +1115,7 @@ def _build_apple_thinker_request(
         lambda self, vocab_size: None,
     )
     monkeypatch.setattr(
-        "sglang_omni.models.qwen3_omni.request_builders._compute_mrope_positions",
+        "sglang_omni.models.qwen3_omni.request_builders.compute_mrope_positions",
         lambda input_ids, model_inputs, thinker_config: (
             torch.zeros((3, input_ids.numel()), dtype=torch.long),
             torch.tensor(0),

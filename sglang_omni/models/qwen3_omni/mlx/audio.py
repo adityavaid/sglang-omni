@@ -16,17 +16,13 @@ from mlx.utils import tree_flatten
 
 from sglang_omni.models.qwen3_asr.mlx.model import (
     SinusoidalPositionEmbedding,
-    _get_feat_extract_output_lengths,
+    get_feat_extract_output_lengths,
 )
 from sglang_omni.models.qwen3_omni.mlx.common import load_qwen3_omni_mlx_component
 from sglang_omni.models.qwen3_omni.mlx.config import AudioConfig, Qwen3OmniMlxConfig
 from sglang_omni.models.qwen3_omni.mlx.runner import read_qwen3_omni_component_weights
-from sglang_omni.models.qwen3_omni.mlx.tensor_utils import (
-    mlx_to_torch as _mlx_to_torch,
-)
-from sglang_omni.models.qwen3_omni.mlx.tensor_utils import (
-    torch_to_mlx as _torch_to_mlx,
-)
+from sglang_omni.models.qwen3_omni.mlx.tensor_utils import mlx_to_torch as mlx_to_torch
+from sglang_omni.models.qwen3_omni.mlx.tensor_utils import torch_to_mlx as torch_to_mlx
 
 _AUDIO_PREFIXES = ("thinker.audio_tower.", "audio_tower.")
 _AUDIO_LOCAL_PREFIXES = (
@@ -50,10 +46,10 @@ _CONVOLUTION_WEIGHTS = {
 def qwen3_omni_audio_output_lengths(input_lengths: mx.array) -> mx.array:
     """Match the pinned Hugging Face three-layer audio CNN length arithmetic."""
 
-    return _get_feat_extract_output_lengths(input_lengths.astype(mx.int32))
+    return get_feat_extract_output_lengths(input_lengths.astype(mx.int32))
 
 
-def _chunk_lengths(
+def chunk_lengths(
     feature_lengths: Sequence[int],
     *,
     chunk_size: int,
@@ -62,10 +58,14 @@ def _chunk_lengths(
     for feature_length in feature_lengths:
         if feature_length <= 0:
             raise ValueError("audio feature lengths must be positive")
+        else:
+            pass
         full_chunks, remainder = divmod(feature_length, chunk_size)
         lengths.extend([chunk_size] * full_chunks)
         if remainder:
             lengths.append(remainder)
+        else:
+            pass
     return tuple(lengths)
 
 
@@ -79,13 +79,17 @@ def qwen3_omni_audio_attention_segments(
 
     if n_window <= 0 or n_window_infer <= 0:
         raise ValueError("audio window sizes must be positive")
+    else:
+        pass
     chunk_size = n_window * 2
     window_ratio = n_window_infer // chunk_size
     if window_ratio <= 0:
         raise ValueError("n_window_infer must cover at least one audio chunk")
+    else:
+        pass
 
     lengths = tuple(int(value) for value in np.asarray(feature_lengths).tolist())
-    chunks = _chunk_lengths(lengths, chunk_size=chunk_size)
+    chunks = chunk_lengths(lengths, chunk_size=chunk_size)
     chunk_output_lengths = np.asarray(
         qwen3_omni_audio_output_lengths(mx.array(chunks, dtype=mx.int32))
     )
@@ -101,6 +105,8 @@ def qwen3_omni_audio_attention_segments(
         segments.extend([tokens_per_window] * full_windows)
         if remainder:
             segments.append(remainder)
+        else:
+            pass
     return tuple(segments)
 
 
@@ -118,6 +124,8 @@ def sanitize_audio_weights(
             if key.startswith(prefix):
                 key = key[len(prefix) :]
                 break
+            else:
+                pass
 
         if key in _CONVOLUTION_WEIGHTS:
             expected_shape = expected_shapes.get(key)
@@ -126,6 +134,8 @@ def sanitize_audio_weights(
                 raise ValueError(
                     f"Qwen3-Omni audio model has no target shape for {key!r}"
                 )
+            else:
+                pass
             if source_shape != expected_shape:
                 candidate = value.transpose(0, 2, 3, 1) if value.ndim == 4 else None
                 if candidate is None or tuple(candidate.shape) != expected_shape:
@@ -134,13 +144,21 @@ def sanitize_audio_weights(
                         f"{source_shape}; expected MLX shape {expected_shape} "
                         "or a Torch Conv2D layout that transposes to it"
                     )
+                else:
+                    pass
                 value = candidate
+            else:
+                pass
+        else:
+            pass
 
         if key in sanitized:
             raise ValueError(
                 f"Qwen3-Omni audio weights {source_key!r} and another source "
                 f"both map to {key!r}"
             )
+        else:
+            pass
         sanitized[key] = value
     return sanitized
 
@@ -156,6 +174,8 @@ class AudioAttention(nn.Module):
             raise ValueError(
                 "audio d_model must be divisible by encoder_attention_heads"
             )
+        else:
+            pass
         self.head_dim = self.embed_dim // self.num_heads
         self.scaling = self.head_dim**-0.5
         self.q_proj = nn.Linear(self.embed_dim, self.embed_dim, bias=True)
@@ -174,6 +194,8 @@ class AudioAttention(nn.Module):
             raise ValueError(
                 "audio attention segments do not cover the packed sequence"
             )
+        else:
+            pass
 
         queries = self.q_proj(hidden_states).reshape(
             sequence_length, self.num_heads, self.head_dim
@@ -217,11 +239,15 @@ class AudioEncoderLayer(nn.Module):
         self.fc2 = nn.Linear(config.encoder_ffn_dim, config.d_model)
         self.final_layer_norm = nn.LayerNorm(config.d_model)
 
-    def _activate(self, hidden_states: mx.array) -> mx.array:
+    def activate(self, hidden_states: mx.array) -> mx.array:
         if self.activation_function == "gelu":
             return nn.gelu(hidden_states)
+        else:
+            pass
         if self.activation_function in ("gelu_new", "gelu_pytorch_tanh"):
             return nn.gelu_approx(hidden_states)
+        else:
+            pass
         raise ValueError(
             "unsupported Qwen3-Omni audio activation " f"{self.activation_function!r}"
         )
@@ -242,7 +268,7 @@ class AudioEncoderLayer(nn.Module):
 
         residual = hidden_states
         hidden_states = self.final_layer_norm(hidden_states)
-        hidden_states = self.fc2(self._activate(self.fc1(hidden_states)))
+        hidden_states = self.fc2(self.activate(self.fc1(hidden_states)))
         return residual + hidden_states
 
 
@@ -292,15 +318,19 @@ class Qwen3OmniMlxAudioEncoder(nn.Module):
         self.proj1 = nn.Linear(config.d_model, config.d_model)
         self.proj2 = nn.Linear(config.d_model, config.output_dim)
 
-    def _pack_features(
+    def pack_features(
         self,
         input_features: mx.array,
         feature_attention_mask: mx.array,
     ) -> tuple[mx.array, mx.array]:
         if input_features.ndim != 3:
             raise ValueError("input_features must have shape (batch, mel_bins, frames)")
+        else:
+            pass
         if feature_attention_mask.ndim != 2:
             raise ValueError("feature_attention_mask must have shape (batch, frames)")
+        else:
+            pass
         if (
             input_features.shape[0] != feature_attention_mask.shape[0]
             or input_features.shape[2] != feature_attention_mask.shape[1]
@@ -308,16 +338,22 @@ class Qwen3OmniMlxAudioEncoder(nn.Module):
             raise ValueError(
                 "input_features and feature_attention_mask batch/time shapes differ"
             )
+        else:
+            pass
         if input_features.shape[1] != self.config.num_mel_bins:
             raise ValueError(
                 f"input_features has {input_features.shape[1]} mel bins; "
                 f"expected {self.config.num_mel_bins}"
             )
+        else:
+            pass
 
         mask = np.asarray(feature_attention_mask).astype(bool, copy=False)
         feature_lengths = mask.sum(axis=1, dtype=np.int64)
         if np.any(feature_lengths <= 0):
             raise ValueError("audio feature masks must select at least one frame")
+        else:
+            pass
         rows = [
             mx.take(
                 input_features[row],
@@ -331,14 +367,14 @@ class Qwen3OmniMlxAudioEncoder(nn.Module):
             mx.array(feature_lengths, dtype=mx.int32),
         )
 
-    def _chunk_and_pad(
+    def chunk_and_pad(
         self,
         packed_features: mx.array,
         feature_lengths: mx.array,
     ) -> tuple[mx.array, tuple[int, ...]]:
         lengths = tuple(int(value) for value in np.asarray(feature_lengths).tolist())
         chunk_size = self.n_window * 2
-        chunk_lengths = _chunk_lengths(lengths, chunk_size=chunk_size)
+        chunk_frame_lengths = chunk_lengths(lengths, chunk_size=chunk_size)
         chunks: list[mx.array] = []
         sample_offset = 0
         for feature_length in lengths:
@@ -352,14 +388,14 @@ class Qwen3OmniMlxAudioEncoder(nn.Module):
                 )
             sample_offset = sample_end
 
-        max_chunk_length = max(chunk_lengths)
+        max_chunk_length = max(chunk_frame_lengths)
         padded = [
             mx.pad(chunk, ((0, 0), (0, max_chunk_length - length)))
-            for chunk, length in zip(chunks, chunk_lengths, strict=True)
+            for chunk, length in zip(chunks, chunk_frame_lengths, strict=True)
         ]
-        return mx.stack(padded, axis=0), chunk_lengths
+        return mx.stack(padded, axis=0), chunk_frame_lengths
 
-    def _convolve(self, padded_features: mx.array) -> mx.array:
+    def convolve(self, padded_features: mx.array) -> mx.array:
         chunks: list[mx.array] = []
         features = padded_features[:, :, :, None].astype(self.conv2d1.weight.dtype)
         for start in range(0, features.shape[0], self.conv_chunksize):
@@ -375,15 +411,15 @@ class Qwen3OmniMlxAudioEncoder(nn.Module):
         input_features: mx.array,
         feature_attention_mask: mx.array,
     ) -> tuple[mx.array, mx.array]:
-        packed_features, feature_lengths = self._pack_features(
+        packed_features, feature_lengths = self.pack_features(
             input_features,
             feature_attention_mask,
         )
-        padded_features, chunk_lengths = self._chunk_and_pad(
+        padded_features, chunk_lengths = self.chunk_and_pad(
             packed_features,
             feature_lengths,
         )
-        hidden_states = self._convolve(padded_features)
+        hidden_states = self.convolve(padded_features)
         batch, frequency, time, channels = hidden_states.shape
         hidden_states = hidden_states.transpose(0, 2, 3, 1).reshape(
             batch,
@@ -480,7 +516,7 @@ class Qwen3OmniMlxAudioStageEncoder:
         self.audio_tower = load_qwen3_omni_mlx_audio(model_path)
 
     @staticmethod
-    def _padded_from_packed(
+    def padded_from_packed(
         packed_features: torch.Tensor,
         feature_lengths: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
@@ -488,13 +524,19 @@ class Qwen3OmniMlxAudioStageEncoder:
             raise ValueError(
                 "prepacked input_features must have shape (mel_bins, total_frames)"
             )
+        else:
+            pass
         lengths = feature_lengths.detach().cpu().to(dtype=torch.long).view(-1)
         if torch.any(lengths <= 0):
             raise ValueError("audio_feature_lengths must be positive")
+        else:
+            pass
         if int(lengths.sum().item()) != int(packed_features.shape[-1]):
             raise ValueError(
                 "audio_feature_lengths do not sum to the prepacked frame count"
             )
+        else:
+            pass
         max_length = int(lengths.max().item())
         padded = torch.zeros(
             lengths.shape[0],
@@ -510,18 +552,24 @@ class Qwen3OmniMlxAudioStageEncoder:
             cursor += length
         return padded, mask
 
-    def __call__(self, **inputs: Any) -> dict[str, Any]:
+    def __call__(self, **inputs: torch.Tensor | None) -> dict[str, Any]:
         input_features = inputs.get("input_features")
         if not isinstance(input_features, torch.Tensor):
             raise TypeError("input_features must be a torch.Tensor")
+        else:
+            pass
 
         feature_attention_mask = inputs.get("feature_attention_mask")
         if isinstance(feature_attention_mask, torch.Tensor):
             if input_features.ndim == 2:
                 input_features = input_features.unsqueeze(0)
+            else:
+                pass
             feature_attention_mask = feature_attention_mask.detach().cpu()
             if feature_attention_mask.ndim == 1:
                 feature_attention_mask = feature_attention_mask.unsqueeze(0)
+            else:
+                pass
             feature_lengths = feature_attention_mask.to(dtype=torch.long).sum(dim=1)
             padded_features = input_features.detach().cpu()
         else:
@@ -530,7 +578,9 @@ class Qwen3OmniMlxAudioStageEncoder:
                 raise ValueError(
                     "audio_feature_lengths or feature_attention_mask is required"
                 )
-            padded_features, feature_attention_mask = self._padded_from_packed(
+            else:
+                pass
+            padded_features, feature_attention_mask = self.padded_from_packed(
                 input_features.detach().cpu(),
                 feature_lengths,
             )
@@ -539,12 +589,12 @@ class Qwen3OmniMlxAudioStageEncoder:
             )
 
         audio_embeds, output_lengths = self.audio_tower(
-            _torch_to_mlx(padded_features),
-            _torch_to_mlx(feature_attention_mask),
+            torch_to_mlx(padded_features),
+            torch_to_mlx(feature_attention_mask),
         )
         mx.eval(audio_embeds, output_lengths)
         return {
-            "audio_embeds": _mlx_to_torch(audio_embeds),
+            "audio_embeds": mlx_to_torch(audio_embeds),
             "audio_feature_lengths": feature_lengths,
             "audio_output_lengths": torch.from_numpy(
                 np.ascontiguousarray(

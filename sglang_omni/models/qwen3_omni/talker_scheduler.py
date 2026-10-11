@@ -134,8 +134,7 @@ class QwenTalkerScheduler(OmniScheduler[SGLangARRequestData]):
         del request_id, chunk
         return self.enable_partial_start
 
-<<<<<<< HEAD
-    def bind_model_runner(self, model_runner: Any) -> None:
+    def bind_model_runner(self, model_runner) -> None:
         """Bind the runner and adopt its abort cleanup when it owns state.
 
         The talker runner is built *after* the scheduler (it needs the
@@ -148,13 +147,12 @@ class QwenTalkerScheduler(OmniScheduler[SGLangARRequestData]):
 
         super().bind_model_runner(model_runner)
         abort_request = getattr(model_runner, "abort_request", None)
-        if abort_request is not None and self._abort_callback is None:
-            self._abort_callback = abort_request
+        if abort_request is not None and self.abort_callback is None:
+            self.abort_callback = abort_request
+        else:
+            pass
 
-    def _is_batch_ready_to_run(self, batch: Any) -> bool:
-=======
     def is_batch_ready_to_run(self, batch: ScheduleBatch | None) -> bool:
->>>>>>> upstream/main
         if (
             batch is not None
             and batch.forward_mode.is_decode()

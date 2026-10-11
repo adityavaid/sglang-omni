@@ -8,13 +8,9 @@ import inspect
 import logging
 import sys
 import threading
-<<<<<<< HEAD
-from types import ModuleType, SimpleNamespace
-=======
 from copy import deepcopy
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from unittest.mock import AsyncMock, Mock
->>>>>>> upstream/main
 
 import numpy as np
 import pytest

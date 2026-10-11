@@ -31,7 +31,7 @@ class FakeAudioEncoder:
         }
 
 
-class _DownsamplingFakeAudioEncoder:
+class DownsamplingFakeAudioEncoder:
     def __call__(self, **kwargs: Any) -> dict[str, torch.Tensor]:
         lengths = kwargs["audio_feature_lengths"].to(dtype=torch.long).view(-1)
         output_lengths = (lengths + 7) // 8
@@ -192,11 +192,14 @@ def test_audio_encoder_cache_owns_cuda_output_before_replay():
 
 
 def test_audio_encoder_batch_slices_packed_tokens_by_output_length() -> None:
-    payloads = [_payload("short", "short-key", 9), _payload("long", "long-key", 25)]
+    payloads = [
+        make_payload("short", "short-key", 9),
+        make_payload("long", "long-key", 25),
+    ]
 
-    out = _batch_audio_encoder_payloads(
+    out = batch_audio_encoder_payloads(
         payloads,
-        model=_DownsamplingFakeAudioEncoder(),
+        model=DownsamplingFakeAudioEncoder(),
         cache=None,
     )
 

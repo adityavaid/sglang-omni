@@ -11,6 +11,7 @@ import tempfile
 from collections.abc import Mapping
 from itertools import islice
 from pathlib import Path
+from typing import Any
 
 import av
 import librosa
@@ -18,6 +19,8 @@ import numpy as np
 import numpy.typing as npt
 import torch
 from qwen_vl_utils import vision_process as qwen_vision
+from torchvision.transforms import InterpolationMode
+from torchvision.transforms import functional as tv_f
 
 from sglang_omni.preprocessing.resource_connector import MultiModalResourceConnector
 
@@ -438,13 +441,7 @@ def load_video_path(
     max_pixels: int | None = None,
     total_pixels: int | None = None,
 ) -> tuple[torch.Tensor, float]:
-    """Load a local video into a torch tensor (T, C, H, W) on CPU.
-
-    Pixel budgets and resizing remain owned by ``qwen-vl-utils``. The opt-in
-    PyAV reader avoids TorchCodec's external FFmpeg libraries and torchvision's
-    removed ``read_video`` API on Apple environments.
-    """
-
+    """Load a local video into a torch tensor (T, C, H, W) on CPU."""
     path = Path(path)
     ele: dict[str, str | float | int] = {"video": str(path)}
     if fps is not None:
@@ -465,39 +462,23 @@ def load_video_path(
         pass
     if total_pixels is not None:
         ele["total_pixels"] = int(total_pixels)
-<<<<<<< HEAD
-    try:
-        reader = os.environ.get("SGLANG_OMNI_VIDEO_READER", "qwen")
-        if reader == "pyav":
-            frames, sample_fps = _read_video_frames_pyav(path, ele)
+    else:
+        pass
+    reader = os.environ.get("SGLANG_OMNI_VIDEO_READER", "qwen")
+    if reader == "pyav":
+        try:
+            frames, sample_fps = read_video_frames_pyav(path, ele)
             ele.update(video=frames, sample_fps=sample_fps)
-        elif reader != "qwen":
-            raise ValueError(f"Unsupported video reader: {reader!r}")
-        video, sample_fps = qwen_vision.fetch_video(ele, return_video_sample_fps=True)
-    except Exception as exc:
-        raise VideoDecodeError(
-            f"Failed to decode video path={path}; " f"{type(exc).__name__}: {exc}"
-        ) from exc
-    return video, float(sample_fps)
-
-
-def _read_video_frames_pyav(
-    path: Path, options: dict[str, Any]
-) -> tuple[list[Any], float]:
-    with av.open(str(path)) as container:
-        if not container.streams.video:
-            raise ValueError("Input has no video stream")
-        stream = container.streams.video[0]
-        video_fps = float(stream.average_rate or 0)
-        if video_fps <= 0:
-            raise ValueError("Video stream has no positive frame rate")
-        total_frames = stream.frames
-        if total_frames <= 0:
-            total_frames = sum(1 for _ in container.decode(stream))
-
-    nframes = qwen_vision.smart_nframes(
-        options, total_frames=total_frames, video_fps=video_fps
-=======
+            video, sample_fps = qwen_vision.fetch_video(
+                ele, return_video_sample_fps=True
+            )
+        except Exception as exc:
+            raise VideoDecodeError(
+                f"Failed to decode video path={path}; {type(exc).__name__}: {exc}"
+            ) from exc
+        return video, float(sample_fps)
+    elif reader != "qwen":
+        raise VideoDecodeError(f"Unsupported video reader: {reader!r}")
     else:
         pass
     backend = qwen_vision.get_video_reader_backend()
@@ -548,7 +529,54 @@ def _read_video_frames_pyav(
             total_pixels / nframes * qwen_vision.FRAME_FACTOR,
         ),
         int(min_pixels * 1.05),
->>>>>>> upstream/main
+    )
+    max_pixels_supposed = ele.get("max_pixels", max_pixels)
+    max_pixels = min(max_pixels_supposed, max_pixels)
+    if "resized_height" in ele and "resized_width" in ele:
+        resized_height, resized_width = qwen_vision.smart_resize(
+            ele["resized_height"],
+            ele["resized_width"],
+            factor=qwen_vision.IMAGE_FACTOR,
+        )
+    else:
+        resized_height, resized_width = qwen_vision.smart_resize(
+            height,
+            width,
+            factor=qwen_vision.IMAGE_FACTOR,
+            min_pixels=min_pixels,
+            max_pixels=max_pixels,
+        )
+    video = tv_f.resize(
+        video,
+        [resized_height, resized_width],
+        interpolation=InterpolationMode.BICUBIC,
+        antialias=True,
+    ).float()
+    return video, sample_fps
+
+
+def read_video_frames_pyav(
+    path: Path, options: dict[str, Any]
+) -> tuple[list[Any], float]:
+    with av.open(str(path)) as container:
+        if not container.streams.video:
+            raise ValueError("Input has no video stream")
+        else:
+            pass
+        stream = container.streams.video[0]
+        video_fps = float(stream.average_rate or 0)
+        if video_fps <= 0:
+            raise ValueError("Video stream has no positive frame rate")
+        else:
+            pass
+        total_frames = stream.frames
+        if total_frames <= 0:
+            total_frames = sum(1 for _ in container.decode(stream))
+        else:
+            pass
+
+    nframes = qwen_vision.smart_nframes(
+        options, total_frames=total_frames, video_fps=video_fps
     )
     indices = torch.linspace(0, total_frames - 1, nframes).round().long().tolist()
     selected = set(indices)
@@ -557,12 +585,18 @@ def _read_video_frames_pyav(
         for index, frame in enumerate(container.decode(video=0)):
             if index in selected:
                 frames[index] = frame.to_image()
+            else:
+                pass
             if index >= indices[-1]:
                 break
+            else:
+                pass
     if len(frames) != len(selected):
         raise ValueError(
             f"Decoded {len(frames)} of {len(selected)} requested video frames"
         )
+    else:
+        pass
     return [frames[index] for index in indices], nframes / total_frames * video_fps
 
 

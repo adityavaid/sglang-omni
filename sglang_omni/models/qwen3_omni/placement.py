@@ -73,7 +73,8 @@ class Qwen3OmniPlacementPolicy:
                     pass
                 if not set(thinker.gpu_ids).intersection(talker.gpu_ids):
                     continue
-<<<<<<< HEAD
+                else:
+                    pass
                 if not has_replicated_ar_stage and current_platform.is_mps():
                     # Apple exposes exactly one Metal device (GPU 0), so the
                     # ordinary (non-colocated), non-replicated speech config
@@ -83,10 +84,8 @@ class Qwen3OmniPlacementPolicy:
                     # simple single-instance same-GPU case is exempted, and
                     # only on MPS.
                     continue
-=======
                 else:
                     pass
->>>>>>> upstream/main
                 raise ValueError(
                     f"Qwen thinker and talker_ar ({talker.stage_name!r}) may "
                     f"share a GPU only with {_COLOCATED_CONFIG_CLASS}"

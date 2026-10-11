@@ -45,9 +45,6 @@ from sglang_omni.models.qwen3_omni.mlx.talker_prefill import (  # noqa: E402
     Qwen3OmniMlxTalkerPrefillBuilder,
 )
 from sglang_omni.models.qwen3_omni.mlx.thinker import Qwen3OmniMlxThinker  # noqa: E402
-from sglang_omni.models.qwen3_omni.pending_text_queue import (  # noqa: E402
-    PendingTextTensorQueue,
-)
 from sglang_omni.models.qwen3_omni.request_builders import (  # noqa: E402
     make_talker_scheduler_adapters,
 )
@@ -55,6 +52,9 @@ from sglang_omni.models.qwen3_omni.talker_model_runner import (  # noqa: E402
     QwenTalkerModelRunner,
 )
 from sglang_omni.proto.request import OmniRequest, StagePayload  # noqa: E402
+from sglang_omni.scheduling.pending_text_queue import (  # noqa: E402
+    PendingTextTensorQueue,
+)
 from sglang_omni.scheduling.sglang_backend import SGLangOutputProcessor  # noqa: E402
 from sglang_omni.scheduling.types import SchedulerOutput, SchedulerRequest  # noqa: E402
 from tests.unit_test.fixtures.qwen_fakes import FakeQwenTokenizer  # noqa: E402
@@ -97,7 +97,7 @@ def write_indexed_mlx_checkpoint(directory: Path, tensors: dict[str, mx.array]) 
 # Small in-memory thinker for the isolated runner tests
 
 
-def _unit_text_config(num_layers: int = 2) -> MoeTextConfig:
+def unit_text_config(num_layers: int = 2) -> MoeTextConfig:
     return MoeTextConfig(
         hidden_size=HIDDEN,
         head_dim=8,
@@ -121,8 +121,8 @@ def _unit_text_config(num_layers: int = 2) -> MoeTextConfig:
     )
 
 
-def _seeded_thinker(num_layers: int = 2) -> Qwen3OmniMlxThinker:
-    model = Qwen3OmniMlxThinker(_unit_text_config(num_layers))
+def seeded_thinker(num_layers: int = 2) -> Qwen3OmniMlxThinker:
+    model = Qwen3OmniMlxThinker(unit_text_config(num_layers))
     rng = np.random.default_rng(7)
     updates = {}
     for name, value in tree_flatten(model.parameters()):
@@ -137,9 +137,9 @@ def _seeded_thinker(num_layers: int = 2) -> Qwen3OmniMlxThinker:
     return model
 
 
-def _unit_runner(*, capture_hidden_layers=(0, 1), num_layers: int = 2):
+def unit_runner(*, capture_hidden_layers=(0, 1), num_layers: int = 2):
     return build_qwen3_omni_thinker_mlx_runner(
-        model=_seeded_thinker(num_layers),
+        model=seeded_thinker(num_layers),
         placeholder_token_ids=dict(UNIT_PLACEHOLDER_IDS),
         capture_hidden_layers=capture_hidden_layers,
         accept_hidden_layer=(
@@ -154,7 +154,7 @@ def _unit_runner(*, capture_hidden_layers=(0, 1), num_layers: int = 2):
 # Fake scheduler request
 
 
-def _make_req(
+def make_req(
     *,
     rid: str = "req-0",
     prompt_ids: list[int],
@@ -179,7 +179,7 @@ def _make_req(
     )
 
 
-def _prefill(runner, req, token_ids):
+def prefill(runner, req, token_ids):
     return runner.prefill_start(
         req_id=req.rid,
         new_token_ids=list(token_ids),
@@ -199,7 +199,7 @@ def test_mlx_worker_dispatch_preserves_asr_and_adds_omni(monkeypatch):
     observed = []
     monkeypatch.setattr(
         mlx_model_worker,
-        "_MLX_WORKER_FACTORIES",
+        "MLX_WORKER_FACTORIES",
         {
             "Qwen3ASRForConditionalGeneration": lambda **kwargs: observed.append("asr"),
             "Qwen3OmniThinkerForCausalLM": lambda **kwargs: observed.append("thinker"),
@@ -217,7 +217,7 @@ def test_mlx_worker_dispatch_still_routes_qwen3_asr(monkeypatch):
     observed = []
     monkeypatch.setattr(
         mlx_model_worker,
-        "_MLX_WORKER_FACTORIES",
+        "MLX_WORKER_FACTORIES",
         {
             "Qwen3ASRForConditionalGeneration": lambda **kwargs: observed.append("asr"),
             "Qwen3OmniThinkerForCausalLM": lambda **kwargs: observed.append("thinker"),
@@ -234,7 +234,9 @@ def test_mlx_worker_dispatch_still_routes_qwen3_asr(monkeypatch):
 
 
 def test_real_dispatch_table_covers_asr_thinker_and_talker():
-    assert set(mlx_model_worker._MLX_WORKER_FACTORIES) == {
+    assert set(mlx_model_worker.MLX_WORKER_FACTORIES) == {
+        "ArkasrForConditionalGeneration",
+        "FunCosyVoice3SGLangModel",
         "Qwen3ASRForConditionalGeneration",
         "Qwen3OmniThinkerForCausalLM",
         "Qwen3OmniTalker",
@@ -261,7 +263,7 @@ def test_talker_mlx_worker_dispatches_to_the_omni_factory(monkeypatch):
 
     monkeypatch.setattr(
         "sglang_omni.models.qwen3_omni.mlx.runner."
-        "_create_qwen3_omni_talker_mlx_worker",
+        "create_qwen3_omni_talker_mlx_worker",
         _fake_worker,
     )
     with pytest.raises(RuntimeError, match="stop after talker dispatch"):
@@ -284,26 +286,20 @@ def test_mlx_worker_has_no_torch_prefill_shadow(
     class _FakeExternalWorker:
         def __init__(self, **kwargs):
             self.server_args = object()
-            self._init_model_runner()
+            self._init_model_runner()  # noqa: leading-underscore - external runtime contract
 
         def _init_model_runner(self):
             self.model_runner = SimpleNamespace(model=object())
 
     monkeypatch.setattr(
         external_model_worker,
-        "_make_external_worker_class",
+        "make_external_worker_class",
         lambda: _FakeExternalWorker,
     )
     monkeypatch.setattr(
-        external_model_worker, "_build_parallel_state", lambda *args, **kwargs: object()
-    )
-    monkeypatch.setattr(
-        external_model_worker, "_resolve_nccl_port", lambda *args, **kwargs: 12345
-    )
-    monkeypatch.setattr(
         external_model_worker,
-        "_publish_scheduler_runtime_context",
-        lambda *args, **kwargs: None,
+        "initialize_mlx_worker_runtime",
+        lambda *args, **kwargs: 12345,
     )
     server_args = SimpleNamespace(
         quantization=None,
@@ -314,7 +310,7 @@ def test_mlx_worker_has_no_torch_prefill_shadow(
     )
 
     with get_context().override_server_args(**vars(server_args)):
-        worker = mlx_runner._create_qwen3_omni_talker_mlx_worker(
+        worker = mlx_runner.create_qwen3_omni_talker_mlx_worker(
             config=SimpleNamespace(nccl_port=None),
             server_args=server_args,
             gpu_id=0,
@@ -331,8 +327,8 @@ def test_mlx_worker_has_no_torch_prefill_shadow(
 def test_mlx_load_error_never_falls_back_to_another_worker(monkeypatch):
     """SGLANG_USE_MLX=1 must propagate an MLX failure."""
 
-    import sglang.srt.runtime_context as runtime_context
     import sglang.srt.hardware_backend.mlx.runtime as tensor_bridge
+    import sglang.srt.runtime_context as runtime_context
 
     from sglang_omni.model_runner import external_model_worker
     from sglang_omni.models.qwen3_omni import apple_runtime
@@ -350,7 +346,7 @@ def test_mlx_load_error_never_falls_back_to_another_worker(monkeypatch):
     )
     monkeypatch.setattr(
         bootstrap,
-        "_describe_sglang_runtime_configuration",
+        "describe_sglang_runtime_configuration",
         lambda server_args, gpu_id: "test",
     )
 
@@ -390,8 +386,8 @@ def test_model_worker_config_carries_capture_hidden_layers():
 
 
 def test_infrastructure_forwards_capture_layers_to_the_mlx_factory(monkeypatch):
-    import sglang.srt.runtime_context as runtime_context
     import sglang.srt.hardware_backend.mlx.runtime as tensor_bridge
+    import sglang.srt.runtime_context as runtime_context
 
     from sglang_omni.scheduling import bootstrap
 
@@ -405,7 +401,7 @@ def test_infrastructure_forwards_capture_layers_to_the_mlx_factory(monkeypatch):
     )
     monkeypatch.setattr(
         bootstrap,
-        "_describe_sglang_runtime_configuration",
+        "describe_sglang_runtime_configuration",
         lambda server_args, gpu_id: "test",
     )
 
@@ -429,7 +425,7 @@ def test_infrastructure_forwards_capture_layers_to_the_mlx_factory(monkeypatch):
 def test_runner_rejects_capture_layer_that_talker_does_not_accept():
     with pytest.raises(ValueError, match="accept_hidden_layer"):
         build_qwen3_omni_thinker_mlx_runner(
-            model=_seeded_thinker(2),
+            model=seeded_thinker(2),
             placeholder_token_ids=dict(UNIT_PLACEHOLDER_IDS),
             capture_hidden_layers=(0, 1),
             accept_hidden_layer=7,
@@ -441,7 +437,7 @@ def test_runner_rejects_capture_layer_that_talker_does_not_accept():
 def test_runner_rejects_more_than_one_nonzero_capture_layer():
     with pytest.raises(ValueError, match="exactly one"):
         build_qwen3_omni_thinker_mlx_runner(
-            model=_seeded_thinker(3),
+            model=seeded_thinker(3),
             placeholder_token_ids=dict(UNIT_PLACEHOLDER_IDS),
             capture_hidden_layers=(0, 1, 2),
             accept_hidden_layer=2,
@@ -455,17 +451,17 @@ def test_runner_rejects_more_than_one_nonzero_capture_layer():
 
 
 def test_prefill_requires_exactly_one_request():
-    runner = _unit_runner()
-    req_a = _make_req(rid="a", prompt_ids=[1, 2, 3])
-    req_b = _make_req(rid="b", prompt_ids=[4, 5, 6])
-    _prefill(runner, req_a, [1, 2, 3])
+    runner = unit_runner()
+    req_a = make_req(rid="a", prompt_ids=[1, 2, 3])
+    req_b = make_req(rid="b", prompt_ids=[4, 5, 6])
+    prefill(runner, req_a, [1, 2, 3])
     with pytest.raises(RuntimeError, match="one request"):
-        _prefill(runner, req_b, [4, 5, 6])
+        prefill(runner, req_b, [4, 5, 6])
 
 
 def test_prefill_rejects_radix_prefix_and_sampling():
-    runner = _unit_runner()
-    req = _make_req(prompt_ids=[1, 2, 3])
+    runner = unit_runner()
+    req = make_req(prompt_ids=[1, 2, 3])
     with pytest.raises(NotImplementedError, match="radix prefix"):
         runner.prefill_start(
             req_id=req.rid,
@@ -492,13 +488,13 @@ def test_prefill_rejects_radix_prefix_and_sampling():
 def test_prefill_merges_two_separate_runs_of_each_modality():
     """Two images and two audio clips put four separate placeholder runs in one"""
 
-    runner = _unit_runner()
+    runner = unit_runner()
     pad_image = 10_000_011
     pad_audio = 10_000_013
     prompt = [5, pad_image, 6, pad_audio, 7, pad_image, 8, pad_audio, 9]
     image_values = np.array([[0.25] * HIDDEN, [-0.75] * HIDDEN], dtype=np.float32)
     audio_values = np.array([[0.5] * HIDDEN, [-0.5] * HIDDEN], dtype=np.float32)
-    req = _make_req(
+    req = make_req(
         prompt_ids=prompt,
         omni_model_inputs={
             "image_embeds": torch.from_numpy(image_values),
@@ -512,7 +508,7 @@ def test_prefill_merges_two_separate_runs_of_each_modality():
         },
     )
 
-    _prefill(runner, req, prompt)
+    prefill(runner, req, prompt)
 
     assert runner.last_prefill_input_ids == [
         5,
@@ -542,7 +538,7 @@ def test_prefill_interleaves_deepstack_rows_across_two_image_and_video_runs():
     """Image and video DeepStack rows are interleaved by prompt position, so two
     runs of each must produce one joint layer ordered by absolute position."""
 
-    runner = _unit_runner()
+    runner = unit_runner()
     prompt = [
         UNIT_PLACEHOLDER_IDS["image"],
         UNIT_PLACEHOLDER_IDS["video"],
@@ -552,7 +548,7 @@ def test_prefill_interleaves_deepstack_rows_across_two_image_and_video_runs():
     ]
     image_rows = torch.tensor([[1.0] * HIDDEN, [4.0] * HIDDEN])
     video_rows = torch.tensor([[2.0] * HIDDEN, [3.0] * HIDDEN])
-    req = _make_req(
+    req = make_req(
         prompt_ids=prompt,
         omni_model_inputs={
             "image_embeds": image_rows,
@@ -567,7 +563,7 @@ def test_prefill_interleaves_deepstack_rows_across_two_image_and_video_runs():
         },
     )
 
-    layers = runner._deepstack_embeddings(req, req.omni_model_inputs)
+    layers = runner.deepstack_embeddings(req, req.omni_model_inputs)
 
     assert len(layers) == 1
     np.testing.assert_allclose(
@@ -576,15 +572,15 @@ def test_prefill_interleaves_deepstack_rows_across_two_image_and_video_runs():
         rtol=0,
         atol=1e-6,
     )
-    _prefill(runner, req, prompt)
+    prefill(runner, req, prompt)
 
 
 def test_prefill_restores_cache_key_placeholder_ids():
-    runner = _unit_runner()
+    runner = unit_runner()
     pad_audio = 10_000_003
     prompt = [5, pad_audio, pad_audio, 6]
     audio_embeds = torch.zeros((2, HIDDEN), dtype=torch.bfloat16)
-    req = _make_req(
+    req = make_req(
         prompt_ids=prompt,
         omni_model_inputs={
             "audio_embeds": audio_embeds,
@@ -596,7 +592,7 @@ def test_prefill_restores_cache_key_placeholder_ids():
             "audio": torch.tensor([1, 2], dtype=torch.long),
         },
     )
-    pending = _prefill(runner, req, prompt)
+    pending = prefill(runner, req, prompt)
 
     restored = runner.last_prefill_input_ids
     assert restored == [
@@ -612,7 +608,7 @@ def test_prefill_restores_cache_key_placeholder_ids():
 
 
 def test_prefill_converts_bfloat16_without_calling_numpy_on_bf16():
-    runner = _unit_runner()
+    runner = unit_runner()
     pad_audio = 10_000_007
     prompt = [5, pad_audio, pad_audio, 6]
     values = np.array([[0.5] * HIDDEN, [-0.25] * HIDDEN], dtype=np.float32)
@@ -628,7 +624,7 @@ def test_prefill_converts_bfloat16_without_calling_numpy_on_bf16():
             return _forbidden_numpy(self)
         return original_numpy(self, *args, **kwargs)
 
-    req = _make_req(
+    req = make_req(
         prompt_ids=prompt,
         omni_model_inputs={
             "audio_embeds": audio_embeds,
@@ -642,7 +638,7 @@ def test_prefill_converts_bfloat16_without_calling_numpy_on_bf16():
     )
     torch.Tensor.numpy = _guarded_numpy
     try:
-        _prefill(runner, req, prompt)
+        prefill(runner, req, prompt)
     finally:
         torch.Tensor.numpy = original_numpy
 
@@ -652,23 +648,23 @@ def test_prefill_converts_bfloat16_without_calling_numpy_on_bf16():
 
 
 def test_prefill_forwards_mrope_positions_from_the_request():
-    runner = _unit_runner()
+    runner = unit_runner()
     prompt = [1, 2, 3, 4]
     positions = torch.tensor(
         [[0, 1, 2, 3], [0, 5, 6, 3], [0, 7, 8, 3]], dtype=torch.long
     )
-    req = _make_req(prompt_ids=prompt, mrope_positions=positions)
-    _prefill(runner, req, prompt)
+    req = make_req(prompt_ids=prompt, mrope_positions=positions)
+    prefill(runner, req, prompt)
     np.testing.assert_array_equal(
         np.asarray(runner.last_prefill_positions), positions.numpy()
     )
 
 
 def test_text_only_prefill_uses_sequential_positions():
-    runner = _unit_runner()
+    runner = unit_runner()
     prompt = [1, 2, 3, 4]
-    req = _make_req(prompt_ids=prompt)
-    _prefill(runner, req, prompt)
+    req = make_req(prompt_ids=prompt)
+    prefill(runner, req, prompt)
     expected = np.tile(np.arange(4), (3, 1))
     np.testing.assert_array_equal(np.asarray(runner.last_prefill_positions), expected)
 
@@ -678,10 +674,10 @@ def test_text_only_prefill_uses_sequential_positions():
 
 
 def test_prefill_exposes_full_sequence_cpu_torch_hidden_states():
-    runner = _unit_runner()
+    runner = unit_runner()
     prompt = [1, 2, 3, 4, 5]
-    req = _make_req(prompt_ids=prompt)
-    pending = _prefill(runner, req, prompt)
+    req = make_req(prompt_ids=prompt)
+    pending = prefill(runner, req, prompt)
     runner.prefill_finalize(pending)
 
     hidden = runner.pop_hidden_states(pending)
@@ -694,14 +690,14 @@ def test_prefill_exposes_full_sequence_cpu_torch_hidden_states():
 
 
 def test_media_prefill_retains_real_layer24_capture_for_transport():
-    runner = _unit_runner(capture_hidden_layers=(0, 24), num_layers=25)
+    runner = unit_runner(capture_hidden_layers=(0, 24), num_layers=25)
     prompt = [1, UNIT_PLACEHOLDER_IDS["image"], 3]
-    req = _make_req(
+    req = make_req(
         prompt_ids=prompt,
         omni_model_inputs={"image_embeds": torch.full((1, HIDDEN), 0.25)},
         mm_positions={"image": torch.tensor([1])},
     )
-    pending = _prefill(runner, req, prompt)
+    pending = prefill(runner, req, prompt)
     runner.prefill_finalize(pending)
     hidden = runner.pop_hidden_states(pending)
     torch.testing.assert_close(hidden["mlx_prompt_hidden"][0], hidden[24])
@@ -715,10 +711,10 @@ def test_first_prefill_row_not_the_last_reaches_the_talker_stream():
         make_thinker_stream_output_builder,
     )
 
-    runner = _unit_runner()
+    runner = unit_runner()
     prompt = [1, 2, 3, 4, 5]
-    req = _make_req(prompt_ids=prompt)
-    pending = _prefill(runner, req, prompt)
+    req = make_req(prompt_ids=prompt)
+    pending = prefill(runner, req, prompt)
     runner.prefill_finalize(pending)
     hidden = runner.pop_hidden_states(pending)
 
@@ -728,10 +724,8 @@ def test_first_prefill_row_not_the_last_reaches_the_talker_stream():
 
     processor = SGLangOutputProcessor(
         capture_hidden=True,
-        capture_hidden_layers=[0, 1],
-        model=None,
     )
-    scheduler_output = _scheduler_output_for(req, hidden)
+    scheduler_output = scheduler_output_for(req, hidden)
     outputs = processor.process(
         SimpleNamespace(
             logits_output=SimpleNamespace(hidden_states=hidden),
@@ -740,11 +734,11 @@ def test_first_prefill_row_not_the_last_reaches_the_talker_stream():
         scheduler_output,
     )
     extra = outputs[req.rid].extra
-    streamed = extra["hidden_states"]["embed"]
-    assert torch.equal(streamed, embed[0])
-    assert not torch.equal(streamed, embed[-1])
+    assert torch.equal(extra["hidden_states"]["embed"], embed)
 
-    builder = make_thinker_stream_output_builder()
+    builder = make_thinker_stream_output_builder(
+        speech_enabled=True, mlx_prompt_hidden_layer=1
+    )
     req_data = SimpleNamespace(
         req=SimpleNamespace(inflight_middle_chunks=0),
         stage_payload=SimpleNamespace(
@@ -761,9 +755,10 @@ def test_first_prefill_row_not_the_last_reaches_the_talker_stream():
     talker = [m for m in messages if m.target == "talker_ar"]
     assert len(talker) == 1
     assert torch.equal(talker[0].data, embed[0])
+    assert not torch.equal(talker[0].data, embed[-1])
 
 
-def _scheduler_output_for(req, hidden):
+def scheduler_output_for(req, hidden):
     from sglang_omni.scheduling.types import SchedulerOutput, SchedulerRequest
 
     extend_range = SimpleNamespace(length=next(iter(hidden.values())).shape[0])
@@ -784,17 +779,15 @@ def _scheduler_output_for(req, hidden):
 
 
 def test_prefill_then_decode_reuses_the_same_cache_and_advances_positions():
-    runner = _unit_runner()
+    runner = unit_runner()
     prompt = [1, 2, 3, 4]
     positions = torch.tensor(
         [[0, 1, 2, 3], [0, 1, 2, 3], [0, 1, 2, 3]], dtype=torch.long
     )
-    req = _make_req(
-        prompt_ids=prompt, mrope_positions=positions, mrope_position_delta=2
-    )
-    pending = _prefill(runner, req, prompt)
+    req = make_req(prompt_ids=prompt, mrope_positions=positions, mrope_position_delta=2)
+    pending = prefill(runner, req, prompt)
     first_token = runner.prefill_finalize(pending)
-    cache = runner._req_caches[req.rid]
+    cache = runner.req_caches[req.rid]
     assert cache[0].offset == len(prompt)
 
     decode = runner.decode_batch_start([req.rid])
@@ -806,8 +799,8 @@ def test_prefill_then_decode_reuses_the_same_cache_and_advances_positions():
     tokens = runner.decode_batch_finalize(decode)
     assert len(tokens) == 1
     assert cache[0].offset == len(prompt) + 1
-    assert runner._req_token_ids[req.rid][-1] == tokens[0]
-    assert runner._req_token_ids[req.rid][-2] == first_token
+    assert runner.req_token_ids[req.rid][-1] == tokens[0]
+    assert runner.req_token_ids[req.rid][-2] == first_token
 
     hidden = runner.pop_hidden_states(decode)
     assert set(hidden) == {"embed", 1}
@@ -817,10 +810,10 @@ def test_prefill_then_decode_reuses_the_same_cache_and_advances_positions():
 
 
 def test_chained_decode_keeps_per_step_hidden_states_separate():
-    runner = _unit_runner()
+    runner = unit_runner()
     prompt = [1, 2, 3, 4]
-    req = _make_req(prompt_ids=prompt)
-    pending = _prefill(runner, req, prompt)
+    req = make_req(prompt_ids=prompt)
+    pending = prefill(runner, req, prompt)
     runner.prefill_finalize(pending)
 
     first = runner.decode_batch_start([req.rid])
@@ -832,14 +825,14 @@ def test_chained_decode_keeps_per_step_hidden_states_separate():
 
     runner.decode_batch_finalize(first)
     runner.decode_batch_finalize(second)
-    assert runner._req_caches[req.rid][0].offset == len(prompt) + 2
+    assert runner.req_caches[req.rid][0].offset == len(prompt) + 2
 
 
 def test_decode_rejects_multi_request_batches_and_sampling():
-    runner = _unit_runner()
+    runner = unit_runner()
     prompt = [1, 2, 3]
-    req = _make_req(prompt_ids=prompt)
-    runner.prefill_finalize(_prefill(runner, req, prompt))
+    req = make_req(prompt_ids=prompt)
+    runner.prefill_finalize(prefill(runner, req, prompt))
     with pytest.raises(RuntimeError, match="one request"):
         runner.decode_batch_start([req.rid, "other"])
     with pytest.raises(NotImplementedError, match="greedy"):
@@ -847,20 +840,20 @@ def test_decode_rejects_multi_request_batches_and_sampling():
 
 
 def test_abort_clears_the_request_cache_and_hidden_state():
-    runner = _unit_runner()
+    runner = unit_runner()
     prompt = [1, 2, 3]
-    req = _make_req(prompt_ids=prompt)
-    runner.prefill_finalize(_prefill(runner, req, prompt))
+    req = make_req(prompt_ids=prompt)
+    runner.prefill_finalize(prefill(runner, req, prompt))
     assert runner.has_request(req.rid)
 
     runner.remove_request(req.rid)
 
     assert not runner.has_request(req.rid)
-    assert req.rid not in runner._req_caches
-    assert req.rid not in runner._req_token_ids
-    assert req.rid not in runner._req_mrope_delta
+    assert req.rid not in runner.req_caches
+    assert req.rid not in runner.req_token_ids
+    assert req.rid not in runner.req_mrope_delta
     # A fresh prefill after the abort is admitted again.
-    runner.prefill_finalize(_prefill(runner, req, prompt))
+    runner.prefill_finalize(prefill(runner, req, prompt))
     assert runner.has_request(req.rid)
 
 
@@ -869,8 +862,8 @@ def test_scheduler_runner_aborts_and_finishes_through_the_mlx_runner():
     worker = SimpleNamespace(_mlx_runner=SimpleNamespace(remove_request=removed.append))
     runner = Qwen3OmniMlxSchedulerModelRunner.__new__(Qwen3OmniMlxSchedulerModelRunner)
     runner.tp_worker = worker
-    runner._last_mlx_pending = None
-    runner._execution_bridge = None
+    runner.last_mlx_pending = None
+    runner.execution_bridge = None
 
     runner.abort_request("req-a")
     runner.on_request_finished("req-b", SimpleNamespace())
@@ -879,13 +872,13 @@ def test_scheduler_runner_aborts_and_finishes_through_the_mlx_runner():
 
 
 def test_scheduler_runner_preserves_hidden_outputs_during_finalize():
-    """``_finalize`` must hand the runner-populated dict to the processor."""
+    """``finalize`` must hand the runner-populated dict to the processor."""
 
     hidden = {"embed": torch.zeros((3, HIDDEN)), 1: torch.ones((3, HIDDEN))}
     seen = {}
 
     class _Processor:
-        _capture_hidden = True
+        capture_hidden = True
 
         def process(self, model_output, scheduler_output, host_token_ids=None):
             seen["hidden"] = model_output.logits_output.hidden_states
@@ -896,7 +889,7 @@ def test_scheduler_runner_preserves_hidden_outputs_during_finalize():
 
     runner = Qwen3OmniMlxSchedulerModelRunner.__new__(Qwen3OmniMlxSchedulerModelRunner)
     runner.output_processor = _Processor()
-    runner._last_mlx_pending = None
+    runner.last_mlx_pending = None
     batch_result = SimpleNamespace(
         logits_output=SimpleNamespace(hidden_states=hidden),
         next_token_ids=torch.tensor([3]),
@@ -913,7 +906,7 @@ def test_scheduler_runner_preserves_hidden_outputs_during_finalize():
         ],
         batch_data=SimpleNamespace(reqs=[SimpleNamespace(rid="req")]),
     )
-    runner._finalize(batch_result, None, scheduler_output.batch_data, scheduler_output)
+    runner.finalize(batch_result, None, scheduler_output.batch_data, scheduler_output)
     assert seen["hidden"] is hidden
 
 
@@ -940,7 +933,7 @@ def test_dense_local_checkpoint_loads_and_prefills(tiny_checkpoint: Path):
     assert runner.placeholder_token_ids == PLACEHOLDER_IDS
 
     prompt = [11, 12, 13, 14]
-    req = _make_req(prompt_ids=prompt)
+    req = make_req(prompt_ids=prompt)
     pending = runner.prefill_start(
         req_id=req.rid,
         new_token_ids=prompt,
@@ -958,7 +951,7 @@ def test_dense_local_checkpoint_loads_and_prefills(tiny_checkpoint: Path):
     assert torch.isfinite(hidden[24]).all()
 
 
-def _write_quantized_thinker_checkpoint(
+def write_quantized_thinker_checkpoint(
     directory: Path,
     *,
     bare_expert_weight_names: bool,
@@ -968,7 +961,7 @@ def _write_quantized_thinker_checkpoint(
     """A converted 4-bit checkpoint whose MoE expert stacks are quantized."""
 
     directory.mkdir(parents=True, exist_ok=True)
-    dense = _seeded_thinker(2)
+    dense = seeded_thinker(2)
     nn.quantize(dense, group_size=group_size, bits=bits)
 
     weights: dict[str, mx.array] = {}
@@ -981,7 +974,7 @@ def _write_quantized_thinker_checkpoint(
         weights[key] = value
     mx.save_safetensors(str(directory / "model.safetensors"), weights)
 
-    text = _unit_text_config(2)
+    text = unit_text_config(2)
     config = build_tiny_config().to_dict()
     config["architectures"] = ["Qwen3OmniMoeForConditionalGeneration"]
     config["thinker_config"]["image_token_id"] = UNIT_PLACEHOLDER_IDS["image"]
@@ -1021,7 +1014,7 @@ def _write_quantized_thinker_checkpoint(
 def test_converted_4bit_checkpoint_loads_quantized_expert_stacks(
     tmp_path: Path, bare_expert_weight_names: bool
 ):
-    directory = _write_quantized_thinker_checkpoint(
+    directory = write_quantized_thinker_checkpoint(
         tmp_path / f"q4-{int(bare_expert_weight_names)}",
         bare_expert_weight_names=bare_expert_weight_names,
     )
@@ -1044,7 +1037,7 @@ def test_converted_4bit_checkpoint_loads_quantized_expert_stacks(
     assert "model.layers.0.mlp.experts.gate_up_proj.biases" in parameter_names
 
     prompt = [3, 4, 5, 6]
-    req = _make_req(prompt_ids=prompt)
+    req = make_req(prompt_ids=prompt)
     pending = runner.prefill_start(
         req_id=req.rid,
         new_token_ids=prompt,
@@ -1068,7 +1061,7 @@ def test_converted_4bit_checkpoint_loads_quantized_expert_stacks(
 def test_quantized_expert_scales_are_actually_consumed(tmp_path: Path):
     """Perturbing only the expert scales must change the model output."""
 
-    base = _write_quantized_thinker_checkpoint(
+    base = write_quantized_thinker_checkpoint(
         tmp_path / "q4-base", bare_expert_weight_names=False
     )
     perturbed = tmp_path / "q4-perturbed"
@@ -1093,7 +1086,7 @@ def test_quantized_expert_scales_are_actually_consumed(tmp_path: Path):
             capture_hidden_layers=(0, 1),
             pool_size=512,
         )
-        req = _make_req(prompt_ids=prompt)
+        req = make_req(prompt_ids=prompt)
         pending = runner.prefill_start(
             req_id=req.rid,
             new_token_ids=prompt,
@@ -1113,7 +1106,7 @@ def test_quantized_expert_scales_are_actually_consumed(tmp_path: Path):
 
 
 def test_attention_bias_true_is_threaded_into_the_native_model(tmp_path: Path):
-    directory = _write_quantized_thinker_checkpoint(
+    directory = write_quantized_thinker_checkpoint(
         tmp_path / "bias", bare_expert_weight_names=False
     )
     config = json.loads((directory / "config.json").read_text(encoding="utf-8"))
@@ -1134,7 +1127,7 @@ def test_attention_bias_true_is_threaded_into_the_native_model(tmp_path: Path):
 
 
 def test_quantization_metadata_is_read_from_the_checkpoint(tmp_path: Path):
-    directory = _write_quantized_thinker_checkpoint(
+    directory = write_quantized_thinker_checkpoint(
         tmp_path / "meta", bare_expert_weight_names=False, bits=4, group_size=32
     )
     runner_class = make_qwen3_omni_thinker_mlx_runner_class()
@@ -1182,7 +1175,7 @@ def test_dense_checkpoint_captures_match_transformers(tiny_checkpoint: Path):
         capture_hidden_layers=(0, 24),
         pool_size=2048,
     )
-    req = _make_req(prompt_ids=prompt)
+    req = make_req(prompt_ids=prompt)
     pending = runner.prefill_start(
         req_id=req.rid,
         new_token_ids=prompt,
@@ -1233,7 +1226,7 @@ def sglang_runtime_context():
         yield
 
 
-def _talker_memory_pools(size: int = 512):
+def talker_memory_pools(size: int = 512):
     from sglang.srt.mem_cache.allocator.token import TokenToKVPoolAllocator
     from sglang.srt.mem_cache.cache_init_params import CacheInitParams
     from sglang.srt.mem_cache.memory_pool import MHATokenToKVPool, ReqToTokenPool
@@ -1268,7 +1261,7 @@ def _talker_memory_pools(size: int = 512):
     return allocator, req_to_token_pool, tree_cache
 
 
-class _FakeMlxTalkerWorker:
+class FakeMlxTalkerWorker:
     """Stand-in for the external-forward MLX talker worker."""
 
     uses_external_forward = True
@@ -1282,7 +1275,7 @@ class _FakeMlxTalkerWorker:
         self.model_runner = SimpleNamespace(model=_DummyModel())
 
 
-class _TalkerHarness:
+class TalkerHarness:
     """Runner + adapters + pools for one MLX talker request."""
 
     def __init__(self, *, checkpoint: Path, outbox, feedback_enabled: bool = True):
@@ -1314,26 +1307,23 @@ class _TalkerHarness:
             },
             speaker_map=dict(OFFICIAL_SPEAKER_IDS),
         )
-        self.worker = _FakeMlxTalkerWorker(self.mlx_talker, self.prefill_builder)
+        self.worker = FakeMlxTalkerWorker(self.mlx_talker, self.prefill_builder)
         self.outbox = outbox
         self.runner = build_qwen3_omni_talker_mlx_runner(
             tp_worker=self.worker,
-            output_processor=SGLangOutputProcessor(
-                capture_hidden=False, capture_hidden_layers=None, model=None
-            ),
+            output_processor=SGLangOutputProcessor(capture_hidden=False),
             outbox=outbox,
             mlx_talker=self.mlx_talker,
             feedback_enabled=feedback_enabled,
         )
-        self.allocator, self.req_to_token_pool, self.tree_cache = _talker_memory_pools()
-        self._bind_bridge()
+        self.allocator, self.req_to_token_pool, self.tree_cache = talker_memory_pools()
+        self.bind_bridge()
         self.request_builder, _, self.append_chunk, self.mark_done = (
             make_talker_scheduler_adapters(
                 tokenizer=FakeQwenTokenizer(),
                 codec_vocab_size=TALKER_VOCAB,
                 prefill_builder=self.prefill_builder,
                 thinker_config=root.thinker_config,
-                required_aux_hidden_key=talker_config.accept_hidden_layer,
                 codec_bos_id=talker_config.codec_bos_id,
                 codec_eos_id=talker_config.codec_eos_token_id,
                 codec_nothink_id=talker_config.codec_nothink_id,
@@ -1355,13 +1345,13 @@ class _TalkerHarness:
             )
         )
 
-    def _bind_bridge(self):
+    def bind_bridge(self):
         from sglang.srt.managers.overlap_utils import FutureMap
         from sglang.srt.speculative.spec_info import SpeculativeAlgorithm
 
         from sglang_omni.model_runner.sglang_execution import SGLangExecutionBridge
 
-        allocator, req_to_token_pool, tree_cache = _talker_memory_pools()
+        allocator, req_to_token_pool, tree_cache = talker_memory_pools()
         self.allocator = allocator
         self.req_to_token_pool = req_to_token_pool
         self.tree_cache = tree_cache
@@ -1388,7 +1378,7 @@ class _TalkerHarness:
         thinker_done: bool = True,
         stream: bool = False,
     ):
-        payload = _talker_stage_payload(request_id=request_id, stream=stream)
+        payload = talker_stage_payload(request_id=request_id, stream=stream)
         payload.prefetched_stream_done = thinker_done
         req_data = self.request_builder(payload)
         if suppress_tokens is not None:
@@ -1403,8 +1393,8 @@ class _TalkerHarness:
         from sglang_omni.scheduling.omni_scheduler import OmniScheduler
 
         req = req_data.req
-        req._omni_data = req_data
-        OmniScheduler._normalize_req_token_arrays(req)
+        req.omni_data = req_data
+        OmniScheduler.normalize_req_token_arrays(req)
         req.init_next_round_input(tree_cache=self.tree_cache)
         req.set_extend_range(0, len(req.origin_input_ids))
         batch = ScheduleBatch.init_new(
@@ -1448,7 +1438,7 @@ class _TalkerHarness:
                 return messages
 
 
-def _talker_stage_payload(*, request_id: str = "req", stream: bool = False):
+def talker_stage_payload(*, request_id: str = "req", stream: bool = False):
     """A talker StagePayload with a real chat-template prompt and thinker chunks."""
 
     prompt_ids = torch.tensor(
@@ -1488,12 +1478,12 @@ def _talker_stage_payload(*, request_id: str = "req", stream: bool = False):
 def build_tiny_mlx_talker_runner(*, checkpoint: Path, outbox=None, **kwargs):
     """The brief's fixture entry point: a fully wired tiny MLX talker runner."""
 
-    return _TalkerHarness(
+    return TalkerHarness(
         checkpoint=checkpoint, outbox=outbox or queue.Queue(), **kwargs
     )
 
 
-def _suppress_all_but(token_id: int, vocab_size: int = TALKER_VOCAB) -> list[int]:
+def suppress_all_but(token_id: int, vocab_size: int = TALKER_VOCAB) -> list[int]:
     return [candidate for candidate in range(vocab_size) if candidate != token_id]
 
 
@@ -1567,7 +1557,7 @@ def test_decode_consumes_exactly_one_feedback_and_one_text_row(
 def test_take_next_decode_rows_matches_the_torch_runner_sum(
     tiny_checkpoint: Path, sglang_runtime_context
 ):
-    """The unsummed pair is exactly ``_take_next_decode_input_embed``'s row."""
+    """The unsummed pair is exactly ``take_next_decode_input_embed``'s row."""
 
     harness = build_tiny_mlx_talker_runner(checkpoint=tiny_checkpoint)
     req_data = harness.build_request()
@@ -1582,10 +1572,10 @@ def test_take_next_decode_rows_matches_the_torch_runner_sum(
             decode_input_embeds=[],
         )
     )
-    expected = QwenTalkerModelRunner._take_next_decode_input_embed(
+    expected = QwenTalkerModelRunner.take_next_decode_input_embed(
         sched_req=mirror, device=torch.device("cpu"), dtype=torch.float32
     )
-    feedback, text = Qwen3OmniMlxTalkerModelRunner._take_next_decode_rows(
+    feedback, text = Qwen3OmniMlxTalkerModelRunner.take_next_decode_rows(
         SimpleNamespace(data=req_data)
     )
 
@@ -1669,7 +1659,7 @@ def test_codec_eos_completes_without_duplicate_emission_or_leakage(
     harness = build_tiny_mlx_talker_runner(checkpoint=tiny_checkpoint)
     runner = harness.runner
     # Suppress everything but the codec EOS so the greedy argmax must pick it.
-    req_data = harness.build_request(suppress_tokens=_suppress_all_but(CODEC_EOS))
+    req_data = harness.build_request(suppress_tokens=suppress_all_but(CODEC_EOS))
     scheduler_output = harness.prefill_output(req_data)
 
     result = runner.execute(scheduler_output)
@@ -1683,9 +1673,9 @@ def test_codec_eos_completes_without_duplicate_emission_or_leakage(
     runner.on_request_finished("req", req_data)
 
     assert runner.has_request("req") is False
-    assert runner._pending_steps == {}
-    assert runner._suppress_masks == {}
-    assert runner._mrope_delta == {}
+    assert runner.pending_steps == {}
+    assert runner.suppress_masks == {}
+    assert runner.mrope_delta == {}
     assert list(req_data.pending_feedback_queue) == []
     assert len(req_data.pending_text_queue) == 0
     assert req_data.decode_input_embeds == []
@@ -1704,27 +1694,23 @@ def test_abort_clears_every_per_request_talker_resource(
     runner.abort_request("req")
 
     assert runner.has_request("req") is False
-    assert runner._caches == {}
-    assert runner._suppress_masks == {}
-    assert runner._pending_steps == {}
-    assert runner._inflight_prefills == set()
+    assert runner.caches == {}
+    assert runner.suppress_masks == {}
+    assert runner.pending_steps == {}
+    assert runner.inflight_prefills == set()
 
 
 def test_mrope_positions_follow_linear_talker_semantics(
     tiny_checkpoint: Path, sglang_runtime_context
 ):
-    from sglang_omni.models.qwen3_omni.mrope_positions import linear_mrope_positions
-
     harness = build_tiny_mlx_talker_runner(checkpoint=tiny_checkpoint)
     runner = harness.runner
     req_data = harness.build_request()
     scheduler_output = harness.prefill_output(req_data)
 
     # The request builder attached real linear M-RoPE rows.
-    attached = req_data.req.multimodal_inputs.mrope_positions
     prompt_len = int(req_data.prefill_input_embeds.shape[0])
-    expected_prompt, _ = linear_mrope_positions(prompt_len)
-    torch.testing.assert_close(attached.to(torch.int64), expected_prompt)
+    expected_prompt = torch.arange(prompt_len).unsqueeze(0).expand(3, -1)
 
     prefill_result = runner.execute(scheduler_output)
     torch.testing.assert_close(runner.last_positions, expected_prompt.to(torch.int64))
@@ -1762,8 +1748,8 @@ def test_mlx_talker_runner_refuses_async_lookahead(
     runner.execute(scheduler_output)
     assert len(req_data.pending_feedback_queue) == 1
     assert len(harness.drain_outbox()) == 1
-    assert runner._pending_steps == {}
-    assert runner._inflight_prefills == set()
+    assert runner.pending_steps == {}
+    assert runner.inflight_prefills == set()
 
 
 def test_bootstrap_refuses_partial_start_for_the_mlx_talker(monkeypatch):
@@ -1783,19 +1769,21 @@ def test_talker_scheduler_binds_runner_abort_cleanup():
     from sglang_omni.scheduling.omni_scheduler import OmniScheduler
 
     scheduler = object.__new__(QwenTalkerScheduler)
-    scheduler._abort_callback = None
+    scheduler.abort_callback = None
     aborted: list[str] = []
     runner = SimpleNamespace(abort_request=aborted.append)
 
     def _fake_bind(self, model_runner):
-        self._model_runner = model_runner
+        self._model_runner = (
+            model_runner  # noqa: leading-underscore - external runtime contract
+        )
 
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(OmniScheduler, "bind_model_runner", _fake_bind)
         scheduler.bind_model_runner(runner)
 
-    assert scheduler._abort_callback is not None
-    scheduler._abort_callback("req")
+    assert scheduler.abort_callback is not None
+    scheduler.abort_callback("req")
     assert aborted == ["req"]
 
 
@@ -1818,7 +1806,7 @@ def test_dense_talker_checkpoint_loads_from_per_expert_shards(tiny_checkpoint: P
     assert not any(name.startswith("thinker") for name in names)
 
 
-def _write_converted_component_checkpoint(root: Path, source: Path) -> Path:
+def write_converted_component_checkpoint(root: Path, source: Path) -> Path:
     """A converted MLX export: one prefix-stripped shard per component dir."""
 
     root.mkdir(parents=True, exist_ok=True)
@@ -1850,7 +1838,7 @@ def _write_converted_component_checkpoint(root: Path, source: Path) -> Path:
 def test_talker_loader_ignores_sibling_component_shards(
     tiny_checkpoint: Path, tmp_path: Path
 ):
-    converted = _write_converted_component_checkpoint(
+    converted = write_converted_component_checkpoint(
         tmp_path / "converted", tiny_checkpoint
     )
 
@@ -1883,7 +1871,7 @@ def test_talker_loader_ignores_sibling_component_shards(
 def test_thinker_loader_ignores_sibling_component_shards(
     tiny_checkpoint: Path, tmp_path: Path
 ):
-    converted = _write_converted_component_checkpoint(
+    converted = write_converted_component_checkpoint(
         tmp_path / "converted-thinker", tiny_checkpoint
     )
 
@@ -2015,7 +2003,7 @@ def test_component_reader_ignores_directories_named_safetensors(
     }
 
 
-def _write_quantized_talker_checkpoint(
+def write_quantized_talker_checkpoint(
     directory: Path, source: Path, *, bits: int = 4, group_size: int = 32
 ) -> Path:
     """A converted 4-bit talker export with real weights/scales/biases."""
@@ -2036,7 +2024,7 @@ def _write_quantized_talker_checkpoint(
 def test_converted_4bit_talker_checkpoint_loads_and_steps(
     tiny_checkpoint: Path, tmp_path: Path
 ):
-    directory = _write_quantized_talker_checkpoint(
+    directory = write_quantized_talker_checkpoint(
         tmp_path / "talker-q4", tiny_checkpoint
     )
     loaded = load_qwen3_omni_mlx_talker(str(directory))
@@ -2135,7 +2123,7 @@ def test_bootstrap_wires_the_native_builder_and_the_mlx_talker_runner(
         },
         speaker_map=dict(OFFICIAL_SPEAKER_IDS),
     )
-    worker = _FakeMlxTalkerWorker(loaded["model"], prefill_builder)
+    worker = FakeMlxTalkerWorker(loaded["model"], prefill_builder)
     hf_config = root
     model_config = SimpleNamespace(
         hf_config=hf_config,
@@ -2168,7 +2156,7 @@ def test_bootstrap_wires_the_native_builder_and_the_mlx_talker_runner(
     )
 
     def _fake_output_processor(**kwargs):
-        seen["output_processor_model"] = kwargs["model"]
+        seen["output_processor_model"] = kwargs.get("model")
         return object()
 
     monkeypatch.setattr(sglang_backend, "SGLangOutputProcessor", _fake_output_processor)
@@ -2188,7 +2176,7 @@ def test_bootstrap_wires_the_native_builder_and_the_mlx_talker_runner(
         seen["runner_kwargs"] = kwargs
         return mlx_runner.Qwen3OmniMlxTalkerModelRunner(
             kwargs["tp_worker"],
-            SGLangOutputProcessor(capture_hidden=False, model=None),
+            SGLangOutputProcessor(capture_hidden=False),
             kwargs["outbox"],
             mlx_talker=kwargs["mlx_talker"],
             feedback_enabled=kwargs["feedback_enabled"],
@@ -2198,7 +2186,11 @@ def test_bootstrap_wires_the_native_builder_and_the_mlx_talker_runner(
         mlx_runner, "build_qwen3_omni_talker_mlx_runner", _fake_build_runner
     )
 
-    bootstrap.create_talker_scheduler(SimpleNamespace(), 0)
+    from sglang_omni.scheduling.generation_batch_policy import CudaGraphConfig
+
+    bootstrap.create_talker_scheduler(
+        SimpleNamespace(cuda_graph_config=CudaGraphConfig()), 0
+    )
 
     assert seen["prefill_builder"] is prefill_builder
     assert seen["output_processor_model"] is None
@@ -2233,15 +2225,15 @@ def test_abort_drops_a_computed_but_unemitted_step(
         None, scheduler_output.batch_data, scheduler_output.requests
     )
 
-    assert set(runner._pending_steps) == {"req"}
+    assert set(runner.pending_steps) == {"req"}
     assert runner.has_request("req") is True
     assert harness.drain_outbox() == []
 
     runner.abort_request("req")
 
-    assert runner._pending_steps == {}
-    assert runner._caches == {}
-    assert runner._suppress_masks == {}
+    assert runner.pending_steps == {}
+    assert runner.caches == {}
+    assert runner.suppress_masks == {}
     assert list(req_data.pending_feedback_queue) == []
 
 

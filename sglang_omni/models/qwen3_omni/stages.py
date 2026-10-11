@@ -106,7 +106,6 @@ class ArMemoryContract:
     applied_encoder_mem_reserve: float
 
 
-<<<<<<< HEAD
 def qwen3_omni_uses_mlx_backend() -> bool:
     from sglang_omni.models.qwen3_omni.apple_runtime import (
         qwen3_omni_uses_mlx_backend as uses_mlx_backend,
@@ -115,12 +114,8 @@ def qwen3_omni_uses_mlx_backend() -> bool:
     return uses_mlx_backend()
 
 
-def _apply_qwen_thinker_encoder_reserve(
-    server_args: Any,
-=======
 def apply_qwen_thinker_encoder_reserve(
     server_args: ServerArgs | None,
->>>>>>> upstream/main
     *,
     has_explicit_mem_fraction_static: bool,
     encoder_mem_reserve: float,
@@ -1069,7 +1064,7 @@ def create_image_encoder_executor(
         cache_device="cpu",
     )
 
-    def _encode(payload: StagePayload) -> StagePayload:
+    def encode(payload: StagePayload) -> StagePayload:
         _emit_event(
             request_id=payload.request_id,
             stage=None,
@@ -1117,7 +1112,7 @@ def create_image_encoder_executor(
     # Preserve the calibrated image-encoder batching shape while allowing
     # deployments to opt into a batch wait through the shared encoder knob.
     return SimpleScheduler(
-        _encode,
+        encode,
         batch_compute_fn=_encode_batch,
         max_batch_size=32,
         max_batch_wait_ms=encoder_batch_wait_ms(),
@@ -1159,7 +1154,7 @@ def create_audio_encoder_executor(
         cache_device="cpu",
     )
 
-    def _encode(payload: StagePayload) -> StagePayload:
+    def encode(payload: StagePayload) -> StagePayload:
         _emit_event(
             request_id=payload.request_id,
             stage=None,
@@ -1205,7 +1200,7 @@ def create_audio_encoder_executor(
                 )
 
     return SimpleScheduler(
-        _encode,
+        encode,
         batch_compute_fn=_encode_batch,
         max_batch_size=32,
         max_batch_wait_ms=encoder_batch_wait_ms(),
@@ -1278,7 +1273,6 @@ def create_sglang_thinker_executor_from_config(
         cuda_graph_backend_prefill=prefill_graph_backend,
     )
     overrides["tp_size"] = tp_size
-<<<<<<< HEAD
     from sglang_omni.models.qwen3_omni.apple_runtime import (
         apply_qwen3_omni_apple_profile,
         qwen3_omni_uses_apple_backend,
@@ -1292,9 +1286,9 @@ def create_sglang_thinker_executor_from_config(
     if qwen3_omni_uses_apple_backend():
         enable_async_decode = False
         prefill_coalesce_requests = 0
+    else:
+        pass
     from sglang_omni.platforms import current_platform
-=======
->>>>>>> upstream/main
 
     if not current_platform.enable_thinker_decode_graph():
         overrides.setdefault("disable_decode_cuda_graph", True)
@@ -1474,7 +1468,6 @@ def create_talker_ar_executor_from_config(
     else:
         pass
     overrides["tp_size"] = tp_size
-<<<<<<< HEAD
     from sglang_omni.models.qwen3_omni.apple_runtime import (
         apply_qwen3_omni_apple_profile,
         qwen3_omni_uses_apple_backend,
@@ -1487,10 +1480,9 @@ def create_talker_ar_executor_from_config(
     )
     if qwen3_omni_uses_apple_backend():
         enable_partial_start = False
-    _apply_colocated_ar_memory_contract(
-=======
+    else:
+        pass
     apply_colocated_ar_memory_contract(
->>>>>>> upstream/main
         overrides,
         stage_name="talker_ar",
         total_gpu_memory_fraction=total_gpu_memory_fraction,

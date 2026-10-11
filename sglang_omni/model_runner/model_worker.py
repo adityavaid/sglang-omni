@@ -37,15 +37,12 @@ class ModelWorkerConfig:
     total_gpu_memory_fraction: float | None = None
     kv_cache_bytes: int | None = None
     enable_prefill_input_embeds: bool = False
-<<<<<<< HEAD
     # Decoder layers whose inputs a stage needs captured (0 == the embedding
     # row). Torch workers install capture hooks from the same list; a native
     # backend worker reads it here because it owns its own forward.
     capture_hidden_layers: tuple[int, ...] | None = None
-=======
     mlx_model_path: str | None = None
     mlx_model_revision: str | None = None
->>>>>>> upstream/main
 
 
 @dataclass(slots=True)

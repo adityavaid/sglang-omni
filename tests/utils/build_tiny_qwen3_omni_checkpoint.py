@@ -163,7 +163,7 @@ _PROCESSOR_ASSET_PATTERNS = (
 _MROPE_SECTION = [2, 1, 1]
 
 
-def _thinker_rope_parameters() -> dict[str, Any]:
+def thinker_rope_parameters() -> dict[str, Any]:
     return {
         "rope_type": "default",
         "rope_theta": 1000000.0,
@@ -173,7 +173,7 @@ def _thinker_rope_parameters() -> dict[str, Any]:
     }
 
 
-def _thinker_text_config() -> dict[str, Any]:
+def thinker_text_config() -> dict[str, Any]:
     return {
         "vocab_size": OFFICIAL_VOCAB_SIZES["thinker_text"],
         "hidden_size": TINY_DIMS["thinker_hidden_size"],
@@ -193,11 +193,11 @@ def _thinker_text_config() -> dict[str, Any]:
         "rms_norm_eps": 1e-6,
         "tie_word_embeddings": False,
         "use_cache": True,
-        "rope_parameters": _thinker_rope_parameters(),
+        "rope_parameters": thinker_rope_parameters(),
     }
 
 
-def _vision_config() -> dict[str, Any]:
+def vision_config() -> dict[str, Any]:
     return {
         "depth": TINY_DIMS["vision_depth"],
         "hidden_size": TINY_DIMS["thinker_hidden_size"],
@@ -214,7 +214,7 @@ def _vision_config() -> dict[str, Any]:
     }
 
 
-def _audio_config() -> dict[str, Any]:
+def audio_config() -> dict[str, Any]:
     return {
         "d_model": TINY_DIMS["thinker_hidden_size"],
         "output_dim": TINY_DIMS["thinker_hidden_size"],
@@ -231,11 +231,11 @@ def _audio_config() -> dict[str, Any]:
     }
 
 
-def _thinker_config() -> dict[str, Any]:
+def thinker_config() -> dict[str, Any]:
     return {
-        "audio_config": _audio_config(),
-        "vision_config": _vision_config(),
-        "text_config": _thinker_text_config(),
+        "audio_config": audio_config(),
+        "vision_config": vision_config(),
+        "text_config": thinker_text_config(),
         "audio_token_id": OFFICIAL_SPECIAL_TOKEN_IDS["thinker_config.audio_token_id"],
         "image_token_id": OFFICIAL_SPECIAL_TOKEN_IDS["thinker_config.image_token_id"],
         "video_token_id": OFFICIAL_SPECIAL_TOKEN_IDS["thinker_config.video_token_id"],
@@ -257,7 +257,7 @@ def _thinker_config() -> dict[str, Any]:
     }
 
 
-def _talker_text_config() -> dict[str, Any]:
+def talker_text_config() -> dict[str, Any]:
     return {
         "vocab_size": OFFICIAL_VOCAB_SIZES["talker_text"],
         "hidden_size": TINY_DIMS["talker_hidden_size"],
@@ -278,11 +278,11 @@ def _talker_text_config() -> dict[str, Any]:
         "rms_norm_eps": 1e-6,
         "tie_word_embeddings": False,
         "use_cache": True,
-        "rope_parameters": _thinker_rope_parameters(),
+        "rope_parameters": thinker_rope_parameters(),
     }
 
 
-def _code_predictor_config() -> dict[str, Any]:
+def code_predictor_config() -> dict[str, Any]:
     return {
         "vocab_size": OFFICIAL_VOCAB_SIZES["code_predictor"],
         "hidden_size": TINY_DIMS["talker_hidden_size"],
@@ -300,17 +300,17 @@ def _code_predictor_config() -> dict[str, Any]:
     }
 
 
-def _talker_config() -> dict[str, Any]:
+def talker_config() -> dict[str, Any]:
     return {
-        "text_config": _talker_text_config(),
-        "code_predictor_config": _code_predictor_config(),
+        "text_config": talker_text_config(),
+        "code_predictor_config": code_predictor_config(),
         "num_code_groups": TINY_DIMS["code_groups"],
         "thinker_hidden_size": TINY_DIMS["thinker_hidden_size"],
         # The production speech path captures thinker hidden layers [0, 24].
         "accept_hidden_layer": 24,
         # Not a declared field on Qwen3OmniMoeTalkerConfig, but read by
         # Qwen3OmniMoeTalkerForConditionalGeneration.__init__.
-        "spatial_merge_size": _vision_config()["spatial_merge_size"],
+        "spatial_merge_size": vision_config()["spatial_merge_size"],
         "speaker_id": dict(OFFICIAL_SPEAKER_IDS),
         "position_id_per_seconds": 13,
         "seconds_per_chunk": 2,
@@ -344,7 +344,7 @@ def _talker_config() -> dict[str, Any]:
     }
 
 
-def _code2wav_config() -> dict[str, Any]:
+def code2wav_config() -> dict[str, Any]:
     return {
         "codebook_size": OFFICIAL_VOCAB_SIZES["codec_codebook"],
         "num_quantizers": TINY_DIMS["code_groups"],
@@ -368,9 +368,9 @@ def build_tiny_config() -> Qwen3OmniMoeConfig:
     """Return the reduced but internally valid full Qwen3-Omni config."""
 
     config = Qwen3OmniMoeConfig(
-        thinker_config=_thinker_config(),
-        talker_config=_talker_config(),
-        code2wav_config=_code2wav_config(),
+        thinker_config=thinker_config(),
+        talker_config=talker_config(),
+        code2wav_config=code2wav_config(),
         enable_audio_output=True,
         im_start_token_id=OFFICIAL_SPECIAL_TOKEN_IDS["im_start_token_id"],
         im_end_token_id=OFFICIAL_SPECIAL_TOKEN_IDS["im_end_token_id"],
@@ -381,11 +381,11 @@ def build_tiny_config() -> Qwen3OmniMoeConfig:
         user_token_id=OFFICIAL_SPECIAL_TOKEN_IDS["user_token_id"],
         assistant_token_id=OFFICIAL_SPECIAL_TOKEN_IDS["assistant_token_id"],
     )
-    _assert_config_is_consistent(config)
+    assert_config_is_consistent(config)
     return config
 
 
-def _assert_config_is_consistent(config: Qwen3OmniMoeConfig) -> None:
+def assert_config_is_consistent(config: Qwen3OmniMoeConfig) -> None:
     thinker_text = config.thinker_config.text_config
     talker_text = config.talker_config.text_config
     predictor = config.talker_config.code_predictor_config
@@ -440,7 +440,7 @@ def _assert_config_is_consistent(config: Qwen3OmniMoeConfig) -> None:
         raise ValueError("mrope_section must sum to head_dim // 2")
 
     for dotted, expected in OFFICIAL_SPECIAL_TOKEN_IDS.items():
-        actual = _resolve_config_attr(config, dotted)
+        actual = resolve_config_attr(config, dotted)
         if actual != expected:
             raise ValueError(f"{dotted} must stay at the official id {expected}")
         limit = (
@@ -456,7 +456,7 @@ def _assert_config_is_consistent(config: Qwen3OmniMoeConfig) -> None:
             raise ValueError(f"speaker {name}={speaker_id} exceeds talker vocabulary")
 
 
-def _resolve_config_attr(config: Qwen3OmniMoeConfig, dotted: str) -> Any:
+def resolve_config_attr(config: Qwen3OmniMoeConfig, dotted: str) -> Any:
     node: Any = config
     for part in dotted.split("."):
         node = getattr(node, part)
@@ -464,7 +464,7 @@ def _resolve_config_attr(config: Qwen3OmniMoeConfig, dotted: str) -> Any:
 
 
 @contextlib.contextmanager
-def _nan_filled_uninitialized_memory() -> Iterator[None]:
+def nan_filled_uninitialized_memory() -> Iterator[None]:
     """Poison uninitialized allocations with NaN for the duration of the block."""
 
     previous_fill = torch.utils.deterministic.fill_uninitialized_memory
@@ -480,7 +480,7 @@ def _nan_filled_uninitialized_memory() -> Iterator[None]:
 
 
 @torch.no_grad()
-def _initialize_weights_upstream_missed(
+def initialize_weights_upstream_missed(
     model: Qwen3OmniMoeForConditionalGeneration,
     config: Qwen3OmniMoeConfig,
 ) -> None:
@@ -505,7 +505,7 @@ _PCM_FULL_SCALE = 32767
 
 
 @torch.no_grad()
-def _rescale_code2wav_to_audible_gain(
+def rescale_code2wav_to_audible_gain(
     model: Qwen3OmniMoeForConditionalGeneration,
 ) -> None:
     """Give the randomly initialised vocoder a non-vanishing transfer gain."""
@@ -523,7 +523,7 @@ def _rescale_code2wav_to_audible_gain(
 
 
 @torch.no_grad()
-def _assert_code2wav_emits_audible_audio(
+def assert_code2wav_emits_audible_audio(
     model: Qwen3OmniMoeForConditionalGeneration,
     config: Qwen3OmniMoeConfig,
 ) -> None:
@@ -553,7 +553,7 @@ def _assert_code2wav_emits_audible_audio(
         raise RuntimeError(f"code2wav probe audio clips the 16-bit rail (peak {peak})")
 
 
-def _assert_weights_are_initialized(
+def assert_weights_are_initialized(
     model: Qwen3OmniMoeForConditionalGeneration,
 ) -> None:
     uninitialized = [
@@ -568,7 +568,7 @@ def _assert_weights_are_initialized(
         )
 
 
-def _assert_model_is_complete(model: Qwen3OmniMoeForConditionalGeneration) -> None:
+def assert_model_is_complete(model: Qwen3OmniMoeForConditionalGeneration) -> None:
     if not model.has_talker:
         raise RuntimeError("talker was not enabled; refusing to save a partial model")
     if getattr(model, "talker", None) is None:
@@ -579,7 +579,7 @@ def _assert_model_is_complete(model: Qwen3OmniMoeForConditionalGeneration) -> No
         raise RuntimeError("talker code predictor is missing from the model")
 
 
-def _assert_saved_checkpoint_is_complete(output_dir: Path) -> None:
+def assert_saved_checkpoint_is_complete(output_dir: Path) -> None:
     keys: set[str] = set()
     shards = sorted(output_dir.rglob("*.safetensors"))
     if not shards:
@@ -600,14 +600,14 @@ def _assert_saved_checkpoint_is_complete(output_dir: Path) -> None:
         )
 
 
-def _clear_stale_shards(output_dir: Path) -> None:
+def clear_stale_shards(output_dir: Path) -> None:
     for stale in output_dir.glob("*.safetensors"):
         stale.unlink()
     for stale in output_dir.glob("*.safetensors.index.json"):
         stale.unlink()
 
 
-def _copy_processor_assets(output_dir: Path, processor_source: str) -> None:
+def copy_processor_assets(output_dir: Path, processor_source: str) -> None:
     source = Path(processor_source)
     if not source.is_dir():
         from huggingface_hub import snapshot_download
@@ -640,23 +640,23 @@ def build_tiny_qwen3_omni_checkpoint(
 
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    _clear_stale_shards(output_dir)
+    clear_stale_shards(output_dir)
 
     config = build_tiny_config()
-    with _nan_filled_uninitialized_memory():
+    with nan_filled_uninitialized_memory():
         torch.manual_seed(SEED)
         model = Qwen3OmniMoeForConditionalGeneration(config)
-        _initialize_weights_upstream_missed(model, config)
-    _rescale_code2wav_to_audible_gain(model)
-    _assert_weights_are_initialized(model)
-    _assert_model_is_complete(model)
-    _assert_code2wav_emits_audible_audio(model, config)
+        initialize_weights_upstream_missed(model, config)
+    rescale_code2wav_to_audible_gain(model)
+    assert_weights_are_initialized(model)
+    assert_model_is_complete(model)
+    assert_code2wav_emits_audible_audio(model, config)
 
     model.save_pretrained(output_dir, safe_serialization=True)
-    _assert_saved_checkpoint_is_complete(output_dir)
+    assert_saved_checkpoint_is_complete(output_dir)
 
     if processor_source is not None:
-        _copy_processor_assets(output_dir, processor_source)
+        copy_processor_assets(output_dir, processor_source)
 
     return output_dir
 

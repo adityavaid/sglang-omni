@@ -21,7 +21,7 @@ def tiny_root_config_dict() -> dict[str, Any]:
     return build_tiny_config().to_dict()
 
 
-def _to_published_legacy_rope(text_cfg: dict[str, Any]) -> None:
+def to_published_legacy_rope(text_cfg: dict[str, Any]) -> None:
     """Rewrite a text config's normalized ``rope_parameters`` in place into the"""
 
     rope = text_cfg.pop("rope_parameters")
@@ -130,9 +130,9 @@ def test_mlx_config_reads_published_legacy_rope_layout() -> None:
     # Published Qwen3-Omni checkpoints store rope as a ``rope_scaling`` dict
     # (rope_type + mrope_section) plus a sibling ``rope_theta``. Direct JSON
     raw = copy.deepcopy(tiny_root_config_dict())
-    _to_published_legacy_rope(raw["thinker_config"]["text_config"])
-    _to_published_legacy_rope(raw["talker_config"]["text_config"])
-    _to_published_legacy_rope(raw["talker_config"]["code_predictor_config"])
+    to_published_legacy_rope(raw["thinker_config"]["text_config"])
+    to_published_legacy_rope(raw["talker_config"]["text_config"])
+    to_published_legacy_rope(raw["talker_config"]["code_predictor_config"])
 
     assert "rope_parameters" not in raw["thinker_config"]["text_config"]
     assert "rope_scaling" in raw["thinker_config"]["text_config"]
@@ -150,9 +150,9 @@ def test_mlx_config_normalized_and_legacy_rope_agree() -> None:
     normalized = Qwen3OmniMlxConfig.from_dict(tiny_root_config_dict())
 
     raw = copy.deepcopy(tiny_root_config_dict())
-    _to_published_legacy_rope(raw["thinker_config"]["text_config"])
-    _to_published_legacy_rope(raw["talker_config"]["text_config"])
-    _to_published_legacy_rope(raw["talker_config"]["code_predictor_config"])
+    to_published_legacy_rope(raw["thinker_config"]["text_config"])
+    to_published_legacy_rope(raw["talker_config"]["text_config"])
+    to_published_legacy_rope(raw["talker_config"]["code_predictor_config"])
     legacy = Qwen3OmniMlxConfig.from_dict(raw)
 
     assert (
@@ -179,7 +179,7 @@ def test_mlx_config_missing_mrope_section_raises_with_dotted_path() -> None:
 
 def test_mlx_config_missing_rope_theta_raises_with_dotted_path() -> None:
     raw = copy.deepcopy(tiny_root_config_dict())
-    _to_published_legacy_rope(raw["thinker_config"]["text_config"])
+    to_published_legacy_rope(raw["thinker_config"]["text_config"])
     raw["thinker_config"]["text_config"].pop("rope_theta", None)
 
     with pytest.raises(KeyError) as excinfo:

@@ -18,12 +18,8 @@ from mlx.utils import tree_flatten
 from sglang_omni.models.qwen3_omni.mlx.common import load_qwen3_omni_mlx_component
 from sglang_omni.models.qwen3_omni.mlx.config import Qwen3OmniMlxConfig, VisionConfig
 from sglang_omni.models.qwen3_omni.mlx.runner import read_qwen3_omni_component_weights
-from sglang_omni.models.qwen3_omni.mlx.tensor_utils import (
-    mlx_to_torch as _mlx_to_torch,
-)
-from sglang_omni.models.qwen3_omni.mlx.tensor_utils import (
-    torch_to_mlx as _torch_to_mlx,
-)
+from sglang_omni.models.qwen3_omni.mlx.tensor_utils import mlx_to_torch as mlx_to_torch
+from sglang_omni.models.qwen3_omni.mlx.tensor_utils import torch_to_mlx as torch_to_mlx
 
 _VISION_PREFIXES = ("thinker.visual.", "thinker.vision_tower.")
 _VISION_LOCAL_PREFIXES = (
@@ -53,13 +49,19 @@ def sanitize_vision_weights(
             if key.startswith(prefix):
                 key = key[len(prefix) :]
                 break
+            else:
+                pass
 
         if key.startswith("merger_list."):
             key = f"deepstack_merger_list.{key[len('merger_list.') :]}"
+        else:
+            pass
         if key.startswith(("merger.", "deepstack_merger_list.")):
             key = key.replace(".ln_q.", ".norm.")
             key = key.replace(".mlp.0.", ".linear_fc1.")
             key = key.replace(".mlp.2.", ".linear_fc2.")
+        else:
+            pass
 
         if key == "patch_embed.proj.weight":
             expected_shape = expected_shapes.get(key)
@@ -69,6 +71,8 @@ def sanitize_vision_weights(
                     "Qwen3-Omni vision model has no target shape for "
                     "'patch_embed.proj.weight'"
                 )
+            else:
+                pass
             if source_shape != expected_shape:
                 candidate = value.transpose(0, 2, 3, 4, 1) if value.ndim == 5 else None
                 if candidate is None or tuple(candidate.shape) != expected_shape:
@@ -77,18 +81,26 @@ def sanitize_vision_weights(
                         f"{source_shape}; expected MLX shape {expected_shape} "
                         "or a Torch Conv3D layout that transposes to it"
                     )
+                else:
+                    pass
                 value = candidate
+            else:
+                pass
+        else:
+            pass
 
         if key in sanitized:
             raise ValueError(
                 f"Qwen3-Omni vision weights {source_key!r} and another source "
                 f"both map to {key!r}"
             )
+        else:
+            pass
         sanitized[key] = value
     return sanitized
 
 
-def _rotate_half(x: mx.array) -> mx.array:
+def rotate_half(x: mx.array) -> mx.array:
     half = x.shape[-1] // 2
     return mx.concatenate((-x[..., half:], x[..., :half]), axis=-1)
 
@@ -152,10 +164,10 @@ class VisionAttention(nn.Module):
         keys_float = keys.astype(mx.float32)
         cos = cos[:, None, :].astype(mx.float32)
         sin = sin[:, None, :].astype(mx.float32)
-        queries = (queries_float * cos + _rotate_half(queries_float) * sin).astype(
+        queries = (queries_float * cos + rotate_half(queries_float) * sin).astype(
             query_dtype
         )
-        keys = (keys_float * cos + _rotate_half(keys_float) * sin).astype(key_dtype)
+        keys = (keys_float * cos + rotate_half(keys_float) * sin).astype(key_dtype)
 
         chunks: list[mx.array] = []
         for start, end in zip(cu_seqlens[:-1], cu_seqlens[1:], strict=True):
@@ -186,6 +198,8 @@ class VisionAttention(nn.Module):
                 )
                 if is_chunked:
                     mx.eval(attended_chunk)
+                else:
+                    pass
                 attended_chunks.append(attended_chunk)
             attended = (
                 attended_chunks[0]
@@ -276,9 +290,13 @@ class Qwen3OmniMlxVisionEncoder(nn.Module):
         super().__init__()
         if config.hidden_size % config.num_heads:
             raise ValueError("vision hidden_size must be divisible by num_heads")
+        else:
+            pass
         num_grid_per_side = math.isqrt(config.num_position_embeddings)
         if num_grid_per_side**2 != config.num_position_embeddings:
             raise ValueError("vision num_position_embeddings must be a square")
+        else:
+            pass
 
         self.config = config
         self.spatial_merge_size = config.spatial_merge_size
@@ -295,32 +313,42 @@ class Qwen3OmniMlxVisionEncoder(nn.Module):
         ]
         self.deepstack_visual_indexes = config.deepstack_visual_indexes
 
-    def _validated_grid(
+    def validated_grid(
         self, grid_thw: mx.array, *, expected_rows: int | None = None
     ) -> tuple[tuple[int, int, int], ...]:
         raw = np.asarray(grid_thw)
         if raw.ndim != 2 or raw.shape[1] != 3:
             raise ValueError("grid_thw must have shape (num_images_or_videos, 3)")
+        else:
+            pass
         if not np.issubdtype(raw.dtype, np.integer):
             raise ValueError("grid_thw must contain integers")
+        else:
+            pass
         grid = tuple(tuple(int(value) for value in row) for row in raw.tolist())
         if any(value <= 0 for row in grid for value in row):
             raise ValueError("grid_thw values must be positive")
+        else:
+            pass
         merge = self.spatial_merge_size
         if any(h % merge or w % merge for _, h, w in grid):
             raise ValueError(
                 "grid height and width must be divisible by spatial_merge_size"
             )
+        else:
+            pass
         rows = sum(t * h * w for t, h, w in grid)
         if expected_rows is not None and rows != expected_rows:
             raise ValueError(
                 f"grid_thw describes {rows} patches but pixel_values has "
                 f"{expected_rows} rows"
             )
+        else:
+            pass
         return grid
 
     def interpolate_position_embeddings(self, grid_thw: mx.array) -> mx.array:
-        grid = self._validated_grid(grid_thw)
+        grid = self.validated_grid(grid_thw)
         outputs: list[mx.array] = []
         table_dtype = self.pos_embed.weight.dtype
         side = self.num_grid_per_side
@@ -368,7 +396,7 @@ class Qwen3OmniMlxVisionEncoder(nn.Module):
         return mx.concatenate(outputs, axis=0)
 
     def build_rotary_positions(self, grid_thw: mx.array) -> tuple[mx.array, mx.array]:
-        grid = self._validated_grid(grid_thw)
+        grid = self.validated_grid(grid_thw)
         merge = self.spatial_merge_size
         positions: list[np.ndarray] = []
         for temporal, height, width in grid:
@@ -405,7 +433,7 @@ class Qwen3OmniMlxVisionEncoder(nn.Module):
         return mx.cos(embedding), mx.sin(embedding)
 
     def frame_cu_seqlens(self, grid_thw: mx.array) -> tuple[int, ...]:
-        grid = self._validated_grid(grid_thw)
+        grid = self.validated_grid(grid_thw)
         cumulative = [0]
         for temporal, height, width in grid:
             for _ in range(temporal):
@@ -415,7 +443,7 @@ class Qwen3OmniMlxVisionEncoder(nn.Module):
     def __call__(
         self, pixel_values: mx.array, grid_thw: mx.array
     ) -> tuple[mx.array, list[mx.array]]:
-        self._validated_grid(grid_thw, expected_rows=pixel_values.shape[0])
+        self.validated_grid(grid_thw, expected_rows=pixel_values.shape[0])
         hidden = self.patch_embed(pixel_values)
         hidden = hidden + self.interpolate_position_embeddings(grid_thw).astype(
             hidden.dtype
@@ -429,6 +457,8 @@ class Qwen3OmniMlxVisionEncoder(nn.Module):
             if layer_index in self.deepstack_visual_indexes:
                 index = self.deepstack_visual_indexes.index(layer_index)
                 deepstack.append(self.deepstack_merger_list[index](hidden))
+            else:
+                pass
 
         primary = self.merger(hidden)
         return primary, deepstack
@@ -477,17 +507,17 @@ class Qwen3OmniMlxImageEncoder:
         self.deepstack_layers = len(self.visual.config.deepstack_visual_indexes)
         self.visual_dtype_bytes = int(self.visual.patch_embed.proj.weight.dtype.size)
 
-    def _encode(
+    def encode(
         self, pixel_values: torch.Tensor, grid_thw: torch.Tensor
     ) -> tuple[torch.Tensor, list[torch.Tensor]]:
         primary, deepstack = self.visual(
-            _torch_to_mlx(pixel_values),
-            _torch_to_mlx(grid_thw),
+            torch_to_mlx(pixel_values),
+            torch_to_mlx(grid_thw),
         )
         mx.eval(primary, deepstack)
-        return _mlx_to_torch(primary), [_mlx_to_torch(layer) for layer in deepstack]
+        return mlx_to_torch(primary), [mlx_to_torch(layer) for layer in deepstack]
 
-    def __call__(self, **inputs: Any) -> dict[str, Any]:
+    def __call__(self, **inputs: torch.Tensor | None) -> dict[str, Any]:
         outputs: dict[str, Any] = {}
         merge = self.spatial_merge_size**2
 
@@ -497,7 +527,7 @@ class Qwen3OmniMlxImageEncoder:
             image_grid_thw, torch.Tensor
         ):
             image_grid_thw = image_grid_thw.detach().cpu().to(dtype=torch.long)
-            image_embeds, deepstack = self._encode(pixel_values, image_grid_thw)
+            image_embeds, deepstack = self.encode(pixel_values, image_grid_thw)
             outputs.update(
                 {
                     "image_embeds": image_embeds,
@@ -506,6 +536,8 @@ class Qwen3OmniMlxImageEncoder:
                     "deepstack_visual_embeds_image": deepstack,
                 }
             )
+        else:
+            pass
 
         pixel_values_videos = inputs.get("pixel_values_videos")
         video_grid_thw = inputs.get("video_grid_thw")
@@ -513,7 +545,7 @@ class Qwen3OmniMlxImageEncoder:
             video_grid_thw, torch.Tensor
         ):
             video_grid_thw = video_grid_thw.detach().cpu().to(dtype=torch.long)
-            video_embeds, deepstack = self._encode(pixel_values_videos, video_grid_thw)
+            video_embeds, deepstack = self.encode(pixel_values_videos, video_grid_thw)
             outputs.update(
                 {
                     "video_embeds": video_embeds,
@@ -522,5 +554,7 @@ class Qwen3OmniMlxImageEncoder:
                     "deepstack_visual_embeds_video": deepstack,
                 }
             )
+        else:
+            pass
 
         return outputs

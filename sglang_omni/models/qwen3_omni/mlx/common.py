@@ -30,12 +30,12 @@ _SPLIT_EXPERT_KEY = re.compile(
 )
 
 
-def _rotate_half(x: mx.array) -> mx.array:
+def rotate_half(x: mx.array) -> mx.array:
     half = x.shape[-1] // 2
     return mx.concatenate([-x[..., half:], x[..., :half]], axis=-1)
 
 
-def _interleave_mrope(freqs: mx.array, sections: tuple[int, ...]) -> mx.array:
+def interleave_mrope(freqs: mx.array, sections: tuple[int, ...]) -> mx.array:
     """Reorganize chunked ``[TTT..HHH..WWW]`` freqs into interleaved ``[THWTHW..]``."""
 
     half = freqs.shape[-1]
@@ -67,19 +67,19 @@ def apply_multimodal_rope(
     inv_freq = 1.0 / (base ** (mx.arange(0, head_dim, 2, dtype=mx.float32) / head_dim))
     pos = positions.astype(mx.float32)  # (3, seq)
     freqs = pos[:, :, None] * inv_freq[None, None, :]  # (3, seq, head_dim // 2)
-    freqs_t = _interleave_mrope(freqs, sections)  # (seq, head_dim // 2)
+    freqs_t = interleave_mrope(freqs, sections)  # (seq, head_dim // 2)
     emb = mx.concatenate([freqs_t, freqs_t], axis=-1)  # (seq, head_dim)
     cos = mx.cos(emb)[None, None, :, :]
     sin = mx.sin(emb)[None, None, :, :]
 
     # Preserve each input's dtype: the reference casts its float32 cos/sin back
     # to the query/key dtype, so low-precision (fp16/bf16) Q/K must not be
-    q_embed = q * cos.astype(q.dtype) + _rotate_half(q) * sin.astype(q.dtype)
-    k_embed = k * cos.astype(k.dtype) + _rotate_half(k) * sin.astype(k.dtype)
+    q_embed = q * cos.astype(q.dtype) + rotate_half(q) * sin.astype(q.dtype)
+    k_embed = k * cos.astype(k.dtype) + rotate_half(k) * sin.astype(k.dtype)
     return q_embed, k_embed
 
 
-class _Experts(nn.Module):
+class Experts(nn.Module):
     """Stacked expert projections, one quantizable module per HF 3-D tensor."""
 
     def __init__(self, num_experts: int, hidden_size: int, intermediate_size: int):
@@ -92,7 +92,7 @@ class _Experts(nn.Module):
         )
 
 
-class _SwiGLUMLP(nn.Module):
+class SwiGLUMLP(nn.Module):
     """Dense SwiGLU MLP used by the talker shared expert."""
 
     def __init__(self, hidden_size: int, intermediate_size: int):
@@ -126,16 +126,18 @@ class SparseMoeBlock(nn.Module):
         self.norm_topk_prob = norm_topk_prob
 
         self.gate = nn.Linear(hidden_size, num_experts, bias=False)
-        self.experts = _Experts(num_experts, hidden_size, moe_intermediate_size)
+        self.experts = Experts(num_experts, hidden_size, moe_intermediate_size)
 
         self.has_shared_expert = bool(shared_expert_intermediate_size)
         if self.has_shared_expert:
-            self.shared_expert = _SwiGLUMLP(
+            self.shared_expert = SwiGLUMLP(
                 hidden_size, int(shared_expert_intermediate_size)
             )
             self.shared_expert_gate = nn.Linear(hidden_size, 1, bias=False)
+        else:
+            pass
 
-    def _route(self, x: mx.array) -> tuple[mx.array, mx.array]:
+    def route(self, x: mx.array) -> tuple[mx.array, mx.array]:
         router_logits = self.gate(x)
         router_probs = mx.softmax(router_logits.astype(mx.float32), axis=-1)
         top_indices = mx.argpartition(-router_probs, kth=self.top_k - 1, axis=-1)[
@@ -147,9 +149,11 @@ class SparseMoeBlock(nn.Module):
                 top_weights.sum(axis=-1, keepdims=True),
                 mx.array(1e-12, dtype=top_weights.dtype),
             )
+        else:
+            pass
         return top_indices, top_weights.astype(x.dtype)
 
-    def _dispatch_experts(self, x: mx.array, indices: mx.array) -> mx.array:
+    def dispatch_experts(self, x: mx.array, indices: mx.array) -> mx.array:
         """Route each token through only its selected top-k experts."""
 
         xs = mx.expand_dims(x, (-2, -3))  # (tokens, 1, 1, hidden)
@@ -167,9 +171,9 @@ class SparseMoeBlock(nn.Module):
         batch_size, sequence_length, hidden_dim = hidden_states.shape
         x = hidden_states.reshape(-1, hidden_dim)  # (tokens, hidden)
 
-        top_indices, top_weights = self._route(x)
+        top_indices, top_weights = self.route(x)
 
-        expert_out = self._dispatch_experts(x, top_indices)  # (tokens, top_k, hidden)
+        expert_out = self.dispatch_experts(x, top_indices)  # (tokens, top_k, hidden)
         # Every top-k slot for a token already maps only to that token's own
         # row, so summing across the slot axis is exactly the scatter-add of
         output = (expert_out * top_weights[..., None]).sum(axis=-2)
@@ -178,17 +182,23 @@ class SparseMoeBlock(nn.Module):
             shared_out = self.shared_expert(x)
             shared_out = mx.sigmoid(self.shared_expert_gate(x)) * shared_out
             output = output + shared_out
+        else:
+            pass
 
         return output.reshape(batch_size, sequence_length, hidden_dim)
 
 
-def _is_convolution_weight(key: str, value: mx.array) -> bool:
+def is_convolution_weight(key: str, value: mx.array) -> bool:
     """Identify HF convolution kernels by module name, not by rank alone."""
 
     if not key.endswith(".weight"):
         return False
+    else:
+        pass
     if value.ndim not in (3, 4):
         return False
+    else:
+        pass
     return any(part.startswith("conv") for part in key.split("."))
 
 
@@ -198,6 +208,8 @@ def normalize_expert_stack_key(key: str) -> str:
     parts = key.split(".")
     if len(parts) >= 2 and parts[-2] == "experts" and parts[-1] in _EXPERT_STACK_NAMES:
         return f"{key}.weight"
+    else:
+        pass
     return key
 
 
@@ -213,6 +225,8 @@ def stack_legacy_expert_weights(
         if match is None:
             stacked[key] = value
             continue
+        else:
+            pass
         projections = grouped.setdefault(match.group("prefix"), {})
         projections.setdefault(match.group("projection"), {})[
             int(match.group("index"))
@@ -224,6 +238,8 @@ def stack_legacy_expert_weights(
             raise ValueError(
                 f"per-expert MoE weights for '{prefix}' are missing {missing}"
             )
+        else:
+            pass
         indices = sorted(projections["down_proj"])
         expected = list(range(len(indices)))
         for projection, entries in projections.items():
@@ -232,6 +248,8 @@ def stack_legacy_expert_weights(
                     f"per-expert MoE weights for '{prefix}.{projection}' cover "
                     f"expert indices {sorted(entries)}, expected {expected}"
                 )
+            else:
+                pass
         stacked[f"{prefix}.gate_up_proj.weight"] = mx.stack(
             [
                 mx.concatenate(
@@ -258,6 +276,8 @@ def fuse_split_expert_weights(
         if match is None:
             fused[key] = value
             continue
+        else:
+            pass
         suffixes = grouped.setdefault(match.group("prefix"), {})
         suffixes.setdefault(match.group("suffix"), {})[
             match.group("projection")
@@ -271,6 +291,8 @@ def fuse_split_expert_weights(
                     f"MLX-VLM expert weights for '{prefix}.{suffix}' are "
                     f"missing {missing}"
                 )
+            else:
+                pass
             gate = projections["gate_proj"]
             up = projections["up_proj"]
             if gate.shape != up.shape:
@@ -278,6 +300,8 @@ def fuse_split_expert_weights(
                     f"MLX-VLM expert gate/up shapes for '{prefix}.{suffix}' "
                     f"do not match: {gate.shape} != {up.shape}"
                 )
+            else:
+                pass
             fused[f"{prefix}.experts.gate_up_proj.{suffix}"] = mx.concatenate(
                 [gate, up], axis=1
             )
@@ -300,14 +324,22 @@ def sanitize_qwen3_omni_weights(
         if is_hf_source:
             if not key.startswith(prefix):
                 continue
+            else:
+                pass
             key = key[len(prefix) :]
             if component == "thinker" and key.startswith("language_model."):
                 key = key[len("language_model.") :]
-            if _is_convolution_weight(key, value):
+            else:
+                pass
+            if is_convolution_weight(key, value):
                 if value.ndim == 4:
                     value = value.transpose(0, 2, 3, 1)
                 else:  # Conv1d: (out, in, k) -> (out, k, in)
                     value = value.transpose(0, 2, 1)
+            else:
+                pass
+        else:
+            pass
         sanitized[normalize_expert_stack_key(key)] = value
 
     return fuse_split_expert_weights(stack_legacy_expert_weights(sanitized))
@@ -340,17 +372,25 @@ def quantize_converted_module(
                 f"incomplete quantized group for layer '{path}': "
                 f"'{path}.biases' present but '{path}.scales' missing"
             )
+        else:
+            pass
         if not has_scales:
             return False
+        else:
+            pass
         if not hasattr(module, "to_quantized"):
             raise ValueError(
                 f"quantized weights present for non-quantizable layer '{path}'"
             )
+        else:
+            pass
         if mode == "affine" and not has_biases:
             raise ValueError(
                 f"incomplete quantized group for layer '{path}': "
                 f"'{path}.scales' present but '{path}.biases' missing"
             )
+        else:
+            pass
         return True
 
     nn.quantize(
@@ -374,6 +414,8 @@ def load_qwen3_omni_mlx_component(
     sanitized = sanitizer(weights)
     if quantization is not None:
         quantize_converted_module(model, sanitized, quantization=quantization)
+    else:
+        pass
     model.load_weights(list(sanitized.items()), strict=True)
     mx.eval(model.parameters())
     return model

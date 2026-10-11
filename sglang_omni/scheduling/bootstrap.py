@@ -78,15 +78,14 @@ def init_sglang_cuda_graphs(
         # Note (yexiaodong): The MLX stub has no Torch graph lifecycle because
         # native MLX lazy evaluation owns graph execution.
         return
-<<<<<<< HEAD
+    else:
+        pass
     if uses_external_forward(model_worker):
         # The stage's own runner owns every forward, so this worker holds no
         # Torch model and no attention backend to capture a graph around.
         return
-=======
     else:
         pass
->>>>>>> upstream/main
     if not model_worker.enable_prefill_input_embeds:
         # Required even when graphs are disabled: SGLang installs its eager
         # phase runner from init_cuda_graphs().
@@ -123,6 +122,7 @@ def create_sglang_infrastructure(
     ) = None,
     mlx_model_path: str | None = None,
     mlx_model_revision: str | None = None,
+    capture_hidden_layers: tuple[int, ...] | None = None,
 ):
     """Create SGLang worker, memory pools, and tree cache.
 
@@ -160,22 +160,18 @@ def create_sglang_infrastructure(
         total_gpu_memory_fraction=total_gpu_memory_fraction,
         kv_cache_bytes=kv_cache_bytes,
         enable_prefill_input_embeds=enable_prefill_input_embeds,
-<<<<<<< HEAD
         capture_hidden_layers=(
             tuple(int(layer) for layer in capture_hidden_layers)
             if capture_hidden_layers
             else None
         ),
-=======
         mlx_model_path=mlx_model_path,
         mlx_model_revision=mlx_model_revision,
->>>>>>> upstream/main
     )
     from sglang.srt.hardware_backend.mlx.runtime import use_mlx
 
     from sglang_omni.model_runner.external_model_worker import (
         EXTERNAL_FORWARD_ARCHITECTURES,
-        uses_external_forward,
     )
     from sglang_omni.models.qwen3_omni.apple_runtime import (
         qwen3_omni_uses_apple_backend,
@@ -213,25 +209,6 @@ def create_sglang_infrastructure(
             tp_rank=tp_rank,
         )
 
-<<<<<<< HEAD
-    if (
-        capture_hidden_layers
-        and not use_mlx()
-        and not uses_external_forward(model_worker)
-    ):
-        from sglang_omni.model_runner._hidden_capture import (
-            install_hidden_capture_hooks,
-        )
-
-        model = model_worker.model_runner.model
-        install_hidden_capture_hooks(
-            model,
-            capture_hidden_layers,
-            max_tokens=_hidden_capture_max_tokens(),
-        )
-
-=======
->>>>>>> upstream/main
     if before_memory_pool is not None:
         # note(ratish): sglang sizes the pool from free memory at this point, so
         # whatever the stage keeps resident has to exist before the reading.

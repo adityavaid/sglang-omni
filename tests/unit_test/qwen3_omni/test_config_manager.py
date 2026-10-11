@@ -20,18 +20,14 @@ from tests.unit_test.pipeline.helpers import build_compiled_process_topology
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
-<<<<<<< HEAD
 @pytest.fixture(autouse=True)
-def _non_apple_config_platform(monkeypatch):
+def non_apple_config_platform(monkeypatch):
     # CUDA/XPU example plans should not depend on the test host. Apple-specific
     # tests explicitly override this platform selection.
     monkeypatch.setattr(qwen3_omni_config.current_platform, "is_mps", lambda: False)
 
 
-def _stage(config, name: str):
-=======
 def make_stage(config, name: str):
->>>>>>> upstream/main
     return next(stage for stage in config.stages if stage.name == name)
 
 
@@ -425,7 +421,6 @@ def test_qwen3_omni_xpu_b60_example_config_loads_and_plans() -> None:
     assert plan.stages["code2wav"].gpu_ids == (7,)
 
 
-<<<<<<< HEAD
 @pytest.mark.parametrize("use_mlx", [False, True])
 def test_qwen3_omni_apple_default_config_needs_no_backend_yaml(
     monkeypatch: pytest.MonkeyPatch, use_mlx: bool
@@ -460,11 +455,11 @@ def test_qwen3_omni_apple_default_config_needs_no_backend_yaml(
         "code2wav",
     ]
     assert all(stage.gpu in (None, 0) for stage in config.stages)
-    code2wav_args = resolve_stage_factory_args(_stage(config, "code2wav"), config)
+    code2wav_args = resolve_stage_factory_args(make_stage(config, "code2wav"), config)
     assert code2wav_args["enable_cuda_graph"] is False
-    assert code2wav_args["enable_batching"] is False
     assert code2wav_args["enable_output_overlap"] is False
-=======
+
+
 @pytest.mark.parametrize("enabled", [False, True])
 def test_talker_start_topology_reaches_bootstrap(monkeypatch, enabled):
     from sglang.srt import runtime_context
@@ -573,4 +568,3 @@ def test_talker_stage_defaults_the_prefill_graph_on_nvidia_and_the_operator_wins
     ladder = built.get("cuda_graph_bs_prefill")
     assert (max(ladder) if ladder else None) == ladder_top
     assert built["operator_selected_prefill_backend"] is operator_selected
->>>>>>> upstream/main

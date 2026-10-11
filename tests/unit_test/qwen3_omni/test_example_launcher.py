@@ -19,17 +19,13 @@ from examples.launchers.qwen3_omni import (
 )
 from sglang_omni.models.qwen3_omni.config import MIN_PARTIAL_START_CHUNKS
 
-<<<<<<< HEAD
-_EXAMPLES_DIR = pathlib.Path(__file__).resolve().parents[3] / "examples"
-_REPO_ROOT = _EXAMPLES_DIR.parent
-_APPLE_DOCS = (
-    _REPO_ROOT / "docs" / "cookbook" / "qwen3_omni.md",
-    _REPO_ROOT / "docs" / "basic_usage" / "qwen3_omni.md",
-)
+EXAMPLES_DIR = pathlib.Path(__file__).resolve().parents[3] / "examples"
+_REPO_ROOT = EXAMPLES_DIR.parent
+_APPLE_DOCS = (_REPO_ROOT / "docs" / "basic_usage" / "qwen3_omni.md",)
 
 
 @pytest.fixture(autouse=True)
-def _isolate_qwen_apple_runtime(monkeypatch):
+def isolate_qwen_apple_runtime(monkeypatch):
     from sglang_omni.models.qwen3_omni import apple_runtime
 
     monkeypatch.setattr(apple_runtime, "qwen3_omni_uses_mlx_backend", lambda: False)
@@ -47,9 +43,6 @@ def test_apple_launcher_defaults_to_mlx_and_rejects_mps():
     assert parser.parse_args(["--model-path", "checkpoint"]).backend == "mlx"
     with pytest.raises(SystemExit):
         parser.parse_args(["--model-path", "checkpoint", "--backend", "mps"])
-=======
-EXAMPLES_DIR = pathlib.Path(__file__).resolve().parents[3] / "examples"
->>>>>>> upstream/main
 
 
 @pytest.mark.parametrize(
@@ -717,26 +710,23 @@ def test_apple_cli_launch_failure_does_not_fallback(
     assert os.environ["SGLANG_USE_MLX"] == selected
 
 
-@pytest.mark.parametrize("path", _APPLE_DOCS, ids=["cookbook", "usage"])
+@pytest.mark.parametrize("path", _APPLE_DOCS, ids=["usage"])
 def test_apple_mlx_recipe_uses_standard_cli_without_preparation(path) -> None:
     text = path.read_text(encoding="utf-8")
 
-    assert 'SGLANG_USE_MLX=1 "$PY" -m sglang_omni.cli serve' in text
+    assert "SGLANG_USE_MLX=1 python -m sglang_omni.cli serve" in text
     assert "qwen3-apple-server" not in text
     assert "qwen3_omni_apple_mlx.yaml" not in text
     assert "prepare_checkpoint" not in text
     assert "hybrid MLX" not in text
 
 
-@pytest.mark.parametrize("path", _APPLE_DOCS, ids=["cookbook", "usage"])
+@pytest.mark.parametrize("path", _APPLE_DOCS, ids=["usage"])
 def test_apple_mlx_docs_qualify_supported_layouts(path) -> None:
     text = " ".join(path.read_text(encoding="utf-8").split())
 
-    assert (
-        "Other MLX-compatible 4-bit layouts may also load when they satisfy the "
-        "Apple checkpoint validator, but the pinned mlx-community checkpoint "
-        "above is the reference checkpoint for this implementation"
-    ) in text
+    assert "mlx-community/Qwen3-Omni-30B-A3B-Instruct-4bit" in text
+    assert "checkpoint conversion" in text
     assert "the tested and recommended deployment" not in text
 
 

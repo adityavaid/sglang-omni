@@ -23,6 +23,8 @@ def prepare_torch_inductor_for_sglang() -> None:
         and torch.backends.mps.is_available()
     ):
         return
+    else:
+        pass
 
     try:
         import_module(_INDUCTOR_PREWARM_MODULE)

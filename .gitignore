@@ -50,11 +50,8 @@ benchmarks/cache/
 .tune-runs/
 .eval-runs/
 .profiling-runs/
-<<<<<<< HEAD
 .worktrees/
-=======
 .e2e-cosyvoice-ab/
->>>>>>> upstream/main
 benchmarks/eval/*.edit.lock
 asr_seedtts_results.json
 .claude/*

@@ -23,7 +23,7 @@ def qwen3_omni_uses_apple_backend() -> bool:
     return bool(current_platform.is_mps())
 
 
-def _reject_explicit_override(
+def reject_explicit_override(
     explicit_overrides: Mapping[str, Any],
     *,
     key: str,
@@ -32,11 +32,15 @@ def _reject_explicit_override(
 ) -> None:
     if key not in explicit_overrides:
         return
+    else:
+        pass
     value = explicit_overrides[key]
     if value not in supported:
         raise ValueError(
             f"Apple Qwen3-Omni {stage_name} does not support {key}={value!r}"
         )
+    else:
+        pass
 
 
 def apply_qwen3_omni_apple_profile(
@@ -47,8 +51,12 @@ def apply_qwen3_omni_apple_profile(
 ) -> dict[str, Any]:
     if not qwen3_omni_uses_apple_backend():
         return dict(overrides)
+    else:
+        pass
     if int(overrides.get("tp_size", 1)) != 1:
         raise ValueError(f"Apple Qwen3-Omni {stage_name} requires tp_size=1")
+    else:
+        pass
 
     supported_explicit = {
         "max_running_requests": (None, 1),
@@ -62,7 +70,7 @@ def apply_qwen3_omni_apple_profile(
         "sampling_backend": (None, "pytorch"),
     }
     for key, supported in supported_explicit.items():
-        _reject_explicit_override(
+        reject_explicit_override(
             explicit_overrides,
             key=key,
             supported=supported,
@@ -84,7 +92,7 @@ def apply_qwen3_omni_apple_profile(
     return result
 
 
-def _validate_option(
+def validate_option(
     params: Mapping[str, Any],
     *,
     key: str,
@@ -97,6 +105,8 @@ def _validate_option(
             f"Apple Qwen3-Omni {stage_name} requires greedy generation; "
             f"unsupported {key}={value!r}"
         )
+    else:
+        pass
 
 
 def validate_qwen3_omni_apple_request(
@@ -106,6 +116,8 @@ def validate_qwen3_omni_apple_request(
 ) -> None:
     if not qwen3_omni_uses_apple_backend():
         return
+    else:
+        pass
 
     if stage_name == "thinker":
         options = {
@@ -116,7 +128,7 @@ def validate_qwen3_omni_apple_request(
             "repetition_penalty": (None, 1, 1.0),
         }
         for key, allowed in options.items():
-            _validate_option(
+            validate_option(
                 params,
                 key=key,
                 allowed=allowed,
@@ -126,7 +138,11 @@ def validate_qwen3_omni_apple_request(
             raise ValueError(
                 "Apple Qwen3-Omni thinker does not support return_logprob=True"
             )
+        else:
+            pass
         return
+    else:
+        pass
 
     if stage_name == "talker_ar":
         options = {
@@ -136,18 +152,20 @@ def validate_qwen3_omni_apple_request(
             "talker_repetition_penalty": (None, 1, 1.0),
         }
         for key, allowed in options.items():
-            _validate_option(
+            validate_option(
                 params,
                 key=key,
                 allowed=allowed,
                 stage_name=stage_name,
             )
         return
+    else:
+        pass
 
     raise ValueError(f"Unknown Qwen3-Omni Apple stage {stage_name!r}")
 
 
-def _read_json(path: Path) -> dict[str, Any]:
+def read_json(path: Path) -> dict[str, Any]:
     try:
         return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
@@ -156,12 +174,14 @@ def _read_json(path: Path) -> dict[str, Any]:
         ) from exc
 
 
-def _resolve_metadata_paths(model_path: str) -> tuple[Path, list[Path]]:
+def resolve_metadata_paths(model_path: str) -> tuple[Path, list[Path]]:
     local_path = Path(model_path)
     if local_path.exists():
         config_path = local_path / "config.json"
         indexes = sorted(local_path.rglob("*.safetensors.index.json"))
         return config_path, indexes
+    else:
+        pass
 
     from huggingface_hub import hf_hub_download, list_repo_files
     from huggingface_hub.errors import HfHubHTTPError
@@ -184,10 +204,12 @@ def _resolve_metadata_paths(model_path: str) -> tuple[Path, list[Path]]:
         raise ValueError(
             f"Qwen3-Omni checkpoint {model_path!r} must expose a safetensors index"
         )
+    else:
+        pass
     return config_path, index_paths
 
 
-def _components_for_key(
+def components_for_key(
     key: str,
     *,
     component_dir: str | None,
@@ -216,6 +238,8 @@ def _components_for_key(
     }
     if component_dir is None:
         return root_components
+    else:
+        pass
 
     local_prefixes = {
         "thinker": ("model.", "lm_head."),
@@ -236,21 +260,31 @@ def _components_for_key(
     if component_dir == "code2wav":
         if key.startswith(local_prefixes["code2wav"]):
             return {"code2wav"}
+        else:
+            pass
         return set()
+    else:
+        pass
     if not use_mlx:
         return set()
+    else:
+        pass
     if component_dir == "talker":
         return {
             component
             for component in ("talker", "predictor")
             if key.startswith(local_prefixes[component])
         }
+    else:
+        pass
     if component_dir == "thinker" and key.startswith(local_prefixes["thinker"]):
         return {component_dir}
+    else:
+        pass
     return set()
 
 
-def _components_from_indexes(
+def components_from_indexes(
     root: Path,
     index_paths: list[Path],
     *,
@@ -258,9 +292,11 @@ def _components_from_indexes(
 ) -> set[str]:
     components: set[str] = set()
     for index_path in index_paths:
-        weight_map = _read_json(index_path).get("weight_map")
+        weight_map = read_json(index_path).get("weight_map")
         if not isinstance(weight_map, dict):
             raise ValueError(f"Missing weight_map in checkpoint index {index_path}")
+        else:
+            pass
         relative_parts: tuple[str, ...] = ()
         try:
             relative_parts = index_path.relative_to(root).parts
@@ -269,7 +305,7 @@ def _components_from_indexes(
         component_dir = relative_parts[0] if len(relative_parts) > 1 else None
         for key in weight_map:
             components.update(
-                _components_for_key(
+                components_for_key(
                     str(key),
                     component_dir=component_dir,
                     use_mlx=use_mlx,
@@ -278,7 +314,7 @@ def _components_from_indexes(
     return components
 
 
-def _components_from_single_files(
+def components_from_single_files(
     root: Path,
     *,
     use_mlx: bool,
@@ -291,14 +327,18 @@ def _components_from_single_files(
     for shard_path in sorted(root.rglob("*.safetensors")):
         if not shard_path.is_file():
             continue
+        else:
+            pass
         if shard_path.parent.resolve() in indexed_directories:
             continue
+        else:
+            pass
         relative_parts = shard_path.relative_to(root).parts
         component_dir = relative_parts[0] if len(relative_parts) > 1 else None
         with safe_open(str(shard_path), framework="pt", device="cpu") as handle:
             for key in handle.keys():
                 components.update(
-                    _components_for_key(
+                    components_for_key(
                         key,
                         component_dir=component_dir,
                         use_mlx=use_mlx,
@@ -315,36 +355,46 @@ def validate_qwen3_omni_apple_checkpoint(
 ) -> None:
     if not qwen3_omni_uses_apple_backend():
         return
+    else:
+        pass
     if not use_mlx:
         raise ValueError("Qwen3-Omni on Apple Silicon requires SGLANG_USE_MLX=1")
+    else:
+        pass
 
-    config_path, index_paths = _resolve_metadata_paths(model_path)
-    config = _read_json(config_path)
+    config_path, index_paths = resolve_metadata_paths(model_path)
+    config = read_json(config_path)
     architectures = config.get("architectures")
     if not isinstance(architectures, list) or _ARCHITECTURE not in architectures:
         raise ValueError(
             f"Qwen3-Omni checkpoint architecture must include {_ARCHITECTURE!r}; "
             f"got {architectures!r}"
         )
+    else:
+        pass
     root = config_path.parent
-    components = _components_from_indexes(
-        root, index_paths, use_mlx=use_mlx
-    )
+    components = components_from_indexes(root, index_paths, use_mlx=use_mlx)
     if Path(model_path).exists():
         components.update(
-            _components_from_single_files(
+            components_from_single_files(
                 root,
                 use_mlx=use_mlx,
                 index_paths=index_paths,
             )
         )
+    else:
+        pass
 
     required = {"thinker"}
     if speech_enabled:
         required.update(("talker", "predictor", "code2wav"))
+    else:
+        pass
     missing = sorted(required - components)
     if missing:
         raise ValueError(
             f"Qwen3-Omni checkpoint {model_path!r} is missing required "
             f"{', '.join(missing)} weights"
         )
+    else:
+        pass

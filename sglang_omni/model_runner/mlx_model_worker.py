@@ -254,16 +254,13 @@ class MlxSchedulerModelRunner(ModelRunner):
             self.resolve_skip_rids = set()
 
 
-def _create_qwen3_asr_mlx_worker(
+def create_qwen3_asr_mlx_worker(
     *,
     config: ModelWorkerConfig,
     server_args: ServerArgs,
     gpu_id: int,
     tp_rank: int = 0,
 ):
-<<<<<<< HEAD
-    """Construct the Qwen3-ASR MLX worker with Omni's scheduler contract."""
-=======
     """Construct an MLX worker with the same scheduler-facing contract as Omni."""
     model_arch = config.model_arch_override
     if model_arch == "Qwen3ASRForConditionalGeneration":
@@ -289,7 +286,6 @@ def _create_qwen3_asr_mlx_worker(
 
     from sglang.srt.configs.model_config import ModelConfig
     from sglang.srt.distributed import bootstrap
->>>>>>> upstream/main
     from sglang.srt.hardware_backend.mlx.model_runner_stub import MlxModelRunnerStub
     from sglang.srt.hardware_backend.mlx.tp_worker import MlxTpModelWorker
     from sglang.srt.runtime_context import (
@@ -298,37 +294,18 @@ def _create_qwen3_asr_mlx_worker(
         get_exec,
         get_memory,
         get_model,
+        get_parallel,
         get_schedule,
-<<<<<<< HEAD
-=======
         publish,
         spawn_world_rank,
->>>>>>> upstream/main
     )
+    from sglang.srt.server_args import PortArgs
 
-<<<<<<< HEAD
-    from sglang_omni.model_runner.external_model_worker import (
-        _build_parallel_state,
-        _publish_scheduler_runtime_context,
-        _resolve_nccl_port,
-    )
-    from sglang_omni.models.qwen3_asr.mlx.runner import make_qwen3_asr_mlx_runner_class
-
-    class OmniQwen3ASRMlxWorker(MlxTpModelWorker):
-=======
     class OmniMlxWorker(MlxTpModelWorker):
->>>>>>> upstream/main
         @property
         def tp_rank(self) -> int:
             return get_parallel().tp_rank
 
-<<<<<<< HEAD
-        def _init_model_runner(self):
-            MlxModelRunnerStub.validate_startup_weight_load_mode()
-            runner_class = make_qwen3_asr_mlx_runner_class()
-            init_kwargs = {
-                "model_path": get_model().model_path,
-=======
         def _init_model_runner(self) -> None:
             MlxModelRunnerStub.validate_startup_weight_load_mode()
             if model_arch == "FunCosyVoice3SGLangModel":
@@ -351,7 +328,6 @@ def _create_qwen3_asr_mlx_worker(
                 pass
             init_kwargs: MlxModelRunnerOptions = {
                 "model_path": mlx_model_path,
->>>>>>> upstream/main
                 "trust_remote_code": get_model().trust_remote_code,
                 "disable_radix_cache": get_memory().disable_radix_cache,
                 "mem_fraction_static": get_schedule().mem_fraction_static,
@@ -396,12 +372,6 @@ def _create_qwen3_asr_mlx_worker(
         def get_attention_tp_cpu_group(self):
             return self.model_runner.attention_tp_group.cpu_group
 
-<<<<<<< HEAD
-    _publish_scheduler_runtime_context(server_args)
-    ps = _build_parallel_state(server_args, gpu_id=gpu_id, tp_rank=tp_rank)
-    nccl_port = _resolve_nccl_port(server_args, config.nccl_port)
-    return OmniQwen3ASRMlxWorker(
-=======
     publish(
         server_args,
         role="scheduler",
@@ -422,17 +392,16 @@ def _create_qwen3_asr_mlx_worker(
     )
     bootstrap.init_layer_runtime(model_config=ModelConfig.from_server_args(server_args))
     return OmniMlxWorker(
->>>>>>> upstream/main
         server_args=server_args,
         gpu_id=gpu_id,
         nccl_port=nccl_port,
     )
 
 
-def _create_qwen3_omni_mlx_worker(
+def create_qwen3_omni_mlx_worker(
     *,
-    config: Any,
-    server_args: Any,
+    config: ModelWorkerConfig,
+    server_args: ServerArgs,
     gpu_id: int,
     tp_rank: int = 0,
 ):
@@ -453,17 +422,19 @@ def _create_qwen3_omni_mlx_worker(
 
 # Architecture -> MLX worker factory. Each stage owns its own native runner, so
 # dispatch is a table rather than a chain of architecture conditionals.
-_MLX_WORKER_FACTORIES = {
-    "Qwen3ASRForConditionalGeneration": _create_qwen3_asr_mlx_worker,
-    "Qwen3OmniThinkerForCausalLM": _create_qwen3_omni_mlx_worker,
-    "Qwen3OmniTalker": _create_qwen3_omni_mlx_worker,
+MLX_WORKER_FACTORIES = {
+    "Qwen3ASRForConditionalGeneration": create_qwen3_asr_mlx_worker,
+    "ArkasrForConditionalGeneration": create_qwen3_asr_mlx_worker,
+    "FunCosyVoice3SGLangModel": create_qwen3_asr_mlx_worker,
+    "Qwen3OmniThinkerForCausalLM": create_qwen3_omni_mlx_worker,
+    "Qwen3OmniTalker": create_qwen3_omni_mlx_worker,
 }
 
 
 def create_mlx_model_worker(
     *,
-    config: Any,
-    server_args: Any,
+    config: ModelWorkerConfig,
+    server_args: ServerArgs,
     gpu_id: int,
     tp_rank: int = 0,
 ):
@@ -473,12 +444,14 @@ def create_mlx_model_worker(
     or a failing MLX load is raised here and never silently retried on another
     backend.
     """
-    factory = _MLX_WORKER_FACTORIES.get(config.model_arch_override)
+    factory = MLX_WORKER_FACTORIES.get(config.model_arch_override)
     if factory is None:
         raise NotImplementedError(
             "Omni's MLX worker supports "
-            f"{sorted(_MLX_WORKER_FACTORIES)}; got {config.model_arch_override!r}"
+            f"{sorted(MLX_WORKER_FACTORIES)}; got {config.model_arch_override!r}"
         )
+    else:
+        pass
     return factory(
         config=config,
         server_args=server_args,

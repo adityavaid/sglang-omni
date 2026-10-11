@@ -12,6 +12,7 @@ from sglang.srt.mem_cache.kv_cache_configurator import KVCacheConfigurator
 from sglang.srt.runtime_context import get_context
 
 import sglang_omni.model_runner.sglang_model_runner as runner_mod
+import sglang_omni.models.qwen3_omni.apple_runtime as apple_runtime
 import sglang_omni.models.qwen3_omni.bootstrap as qwen_bootstrap
 import sglang_omni.models.qwen3_omni.stages as qwen_stages
 from sglang_omni.platforms import current_platform
@@ -19,6 +20,8 @@ from sglang_omni.platforms import current_platform
 
 @pytest.fixture(autouse=True)
 def schedule_bag(monkeypatch):
+    monkeypatch.setattr(apple_runtime, "qwen3_omni_uses_apple_backend", lambda: False)
+    monkeypatch.setattr(apple_runtime, "qwen3_omni_uses_mlx_backend", lambda: False)
     monkeypatch.setattr(
         runner_mod, "get_schedule", lambda: SimpleNamespace(mem_fraction_static=0.9)
     )

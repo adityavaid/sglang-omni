@@ -3,7 +3,12 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import NoReturn
+
+from sglang.srt.managers.schedule_batch import Req
+from sglang.srt.server_args import ServerArgs
+
+from sglang_omni.model_runner.model_worker import ModelWorkerConfig
 
 # Architectures whose Apple-Silicon stages hand model execution to an external
 # runner instead of SGLang's own model runner.
@@ -15,65 +20,43 @@ EXTERNAL_FORWARD_ARCHITECTURES = frozenset(
 )
 
 
-def _build_parallel_state(server_args: Any, *, gpu_id: int, tp_rank: int):
-    """Single-node parallel topology shared by every Omni Apple worker."""
-    from sglang.srt.arg_groups.model_override_base import resolved_view
-    from sglang.srt.distributed.parallel_state_wrapper import ParallelState
-    from sglang.srt.layers.dp_attention import compute_dp_attention_world_info
-
-    server_args = resolved_view(server_args)
-    attn_tp_rank, attn_tp_size, attn_dp_rank, attn_dp_size = (
-        compute_dp_attention_world_info(
-            server_args.enable_dp_attention,
-            tp_rank,
-            server_args.tp_size,
-            server_args.dp_size,
-            server_args.attn_cp_size,
-        )
+def initialize_mlx_worker_runtime(
+    server_args: ServerArgs, *, gpu_id: int, tp_rank: int, nccl_port: int | None
+) -> int:
+    """Publish worker ranks before constructing the MLX bookkeeping model."""
+    from sglang.srt.configs.model_config import ModelConfig
+    from sglang.srt.distributed import bootstrap
+    from sglang.srt.runtime_context import (
+        SpawnRanks,
+        get_device,
+        publish,
+        spawn_world_rank,
     )
-    return ParallelState(
-        tp_rank=tp_rank,
-        tp_size=server_args.tp_size,
-        pp_rank=0,
-        pp_size=1,
-        dp_rank=None,
-        dp_size=server_args.dp_size,
-        attn_tp_rank=attn_tp_rank,
-        attn_tp_size=attn_tp_size,
-        attn_cp_rank=0,
-        attn_cp_size=server_args.attn_cp_size,
-        attn_dcp_rank=tp_rank % server_args.dcp_size,
-        attn_dcp_size=server_args.dcp_size,
-        attn_dp_rank=attn_dp_rank,
-        attn_dp_size=attn_dp_size,
-        moe_ep_rank=0,
-        moe_ep_size=1,
-        moe_dp_rank=None,
-        moe_dp_size=server_args.moe_dp_size,
-        gpu_id=gpu_id,
-    )
-
-
-def _resolve_nccl_port(server_args: Any, nccl_port: int | None) -> int:
     from sglang.srt.server_args import PortArgs
 
-    if nccl_port is not None:
-        return nccl_port
-    return PortArgs.init_new(server_args).nccl_port
+    publish(
+        server_args,
+        role="scheduler",
+        ranks=SpawnRanks(
+            world_rank=spawn_world_rank(server_args, tp_rank=tp_rank, pp_rank=0),
+            gpu_id=gpu_id,
+        ),
+    )
+    if nccl_port is None:
+        nccl_port = PortArgs.init_new(server_args).nccl_port
+    else:
+        pass
+    bootstrap.init_parallel_runtime(
+        server_args=server_args, device=get_device().device, dist_port=nccl_port
+    )
+    bootstrap.init_layer_runtime(model_config=ModelConfig.from_server_args(server_args))
+    return nccl_port
 
 
-def _publish_scheduler_runtime_context(server_args: Any) -> None:
-    # note (yexiaodong): The worker reads the split runtime configuration while
-    # building its model config, before the bookkeeping stub exists.
-    from sglang.srt.runtime_context import publish
-
-    publish(server_args, role="scheduler")
-
-
-def _make_external_worker_class():
+def make_external_worker_class():
     from sglang.srt.hardware_backend.mlx.model_runner_stub import MlxModelRunnerStub
     from sglang.srt.hardware_backend.mlx.tp_worker import MlxTpModelWorker
-    from sglang.srt.runtime_context import get_schedule
+    from sglang.srt.runtime_context import get_parallel, get_schedule
 
     class OmniExternalModelWorker(MlxTpModelWorker):
         """Scheduler bookkeeping for a stage whose runner owns the forward."""
@@ -82,21 +65,29 @@ def _make_external_worker_class():
         # this worker has no real Torch model, so hidden-state capture hooks,
         uses_external_forward = True
 
-        def __init__(self, *, external_backend_name: str, **kwargs: Any) -> None:
-            self._external_backend_name = external_backend_name
-            super().__init__(**kwargs)
+        def __init__(
+            self,
+            *,
+            external_backend_name: str,
+            server_args: ServerArgs,
+            gpu_id: int,
+            nccl_port: int | None = None,
+        ) -> None:
+            self.external_backend_name = external_backend_name
+            super().__init__(
+                server_args=server_args, gpu_id=gpu_id, nccl_port=nccl_port
+            )
 
         @property
         def tp_rank(self) -> int:
-            return self.ps.tp_rank
+            return get_parallel().tp_rank
 
         def _init_model_runner(self) -> None:
             MlxModelRunnerStub.validate_startup_weight_load_mode()
-            self._model_runner = MlxModelRunnerStub(
+            self._model_runner = MlxModelRunnerStub(  # noqa: leading-underscore - external runtime contract
                 model_config=self.model_config,
                 mem_fraction_static=get_schedule().mem_fraction_static,
                 gpu_id=self.gpu_id,
-                ps=self.ps,
                 nccl_port=self.nccl_port,
                 server_args=self.server_args,
                 is_draft_worker=self.is_draft_worker,
@@ -109,15 +100,19 @@ def _make_external_worker_class():
                     get_schedule().max_total_tokens or self.model_config.context_len
                 ),
             )
-            self._mlx_active_rids: set[str] = set()
-            self._mlx_pool_initialized = False
-
-        def forward_batch_generation(self, *args: Any, **kwargs: Any) -> Any:
-            raise RuntimeError(
-                f"{self._external_backend_name} runner must own model forward"
+            self._mlx_active_rids: set[str] = (
+                set()
+            )  # noqa: leading-underscore - external runtime contract
+            self._mlx_pool_initialized = (
+                False  # noqa: leading-underscore - external runtime contract
             )
 
-        def prepare_for_kv_cache_release(self, req: Any) -> None:
+        def forward_batch_generation(self, *args: object, **kwargs: object) -> NoReturn:
+            raise RuntimeError(
+                f"{self.external_backend_name} runner must own model forward"
+            )
+
+        def prepare_for_kv_cache_release(self, req: Req) -> None:
             """No MLX auxiliary state exists to snapshot on this worker."""
             del req
 
@@ -133,15 +128,15 @@ def _make_external_worker_class():
     return OmniExternalModelWorker
 
 
-def uses_external_forward(model_worker: Any) -> bool:
+def uses_external_forward(model_worker: object) -> bool:
     """Whether this worker's model forward runs outside SGLang."""
     return bool(getattr(model_worker, "uses_external_forward", False))
 
 
 def create_external_model_worker(
     *,
-    config: Any,
-    server_args: Any,
+    config: ModelWorkerConfig,
+    server_args: ServerArgs,
     gpu_id: int,
     tp_rank: int = 0,
     backend_name: str,
@@ -153,15 +148,16 @@ def create_external_model_worker(
             f"{sorted(EXTERNAL_FORWARD_ARCHITECTURES)}; got "
             f"{config.model_arch_override!r}"
         )
+    else:
+        pass
 
-    ps = _build_parallel_state(server_args, gpu_id=gpu_id, tp_rank=tp_rank)
-    nccl_port = _resolve_nccl_port(server_args, config.nccl_port)
-    _publish_scheduler_runtime_context(server_args)
-    worker_class = _make_external_worker_class()
+    nccl_port = initialize_mlx_worker_runtime(
+        server_args, gpu_id=gpu_id, tp_rank=tp_rank, nccl_port=config.nccl_port
+    )
+    worker_class = make_external_worker_class()
     return worker_class(
         external_backend_name=backend_name,
         server_args=server_args,
         gpu_id=gpu_id,
-        ps=ps,
         nccl_port=nccl_port,
     )

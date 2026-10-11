@@ -23,6 +23,8 @@ if TYPE_CHECKING:
         sanitize_qwen3_omni_weights,
         tie_lm_head_weights,
     )
+else:
+    pass
 
 __all__ = [
     "CodePredictorConfig",
@@ -42,6 +44,8 @@ __all__ = [
 def __getattr__(name: str):
     if name not in __all__:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    else:
+        pass
     value = getattr(import_module(f"{__name__}.common"), name)
     globals()[name] = value
     return value

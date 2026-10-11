@@ -26,10 +26,10 @@ from sglang_omni.models.qwen3_omni.mlx.talker_prefill import (  # noqa: E402
 from sglang_omni.models.qwen3_omni.payload_types import (  # noqa: E402
     Qwen3OmniPipelineState,
 )
-from sglang_omni.models.qwen3_omni.pending_text_queue import (  # noqa: E402
+from sglang_omni.proto.request import OmniRequest, StagePayload  # noqa: E402
+from sglang_omni.scheduling.pending_text_queue import (  # noqa: E402
     PendingTextTensorQueue,
 )
-from sglang_omni.proto.request import OmniRequest, StagePayload  # noqa: E402
 from tests.utils.build_tiny_qwen3_omni_checkpoint import (  # noqa: E402
     OFFICIAL_SPEAKER_IDS,
     OFFICIAL_SPECIAL_TOKEN_IDS,
@@ -249,31 +249,33 @@ def torch_builder(tiny_checkpoint):
     return make_torch_reference_prefill_builder(tiny_checkpoint)
 
 
-def _stack_pending(queue: PendingTextTensorQueue) -> torch.Tensor:
+def stack_pending(queue: PendingTextTensorQueue) -> torch.Tensor:
     return torch.stack(list(queue), dim=0)
 
 
-def _official_prompt_prefill(torch_builder, payload, chunks, *, thinker_done):
+def official_prompt_prefill(torch_builder, payload, chunks, *, thinker_done):
     from transformers import Qwen3OmniMoeForConditionalGeneration
 
     result = torch_builder.build_prompt_prefill(
         payload, chunks, thinker_done=thinker_done
     )
     state = Qwen3OmniPipelineState.from_dict(payload.data)
-    ids, embed, _, _ = torch_builder._reconstruct_prompt_states(state)
+    ids, embed, _ = torch_builder.reconstruct_prompt_states(state)
     mask = torch_builder.build_multimodal_mask(ids)
     # The upstream local Torch builder still zeroes media rows. Derive the
     # golden user segment from Transformers, using the actual prompt capture.
     reference = SimpleNamespace(
-        talker=torch_builder._model,
-        config=SimpleNamespace(talker_config=torch_builder._model.config),
+        talker=torch_builder.model,
+        config=SimpleNamespace(talker_config=torch_builder.model.config),
     )
     reference.talker.dtype = torch.float32
     user_end = len(ids) - 2
     result["input_embeds"][: user_end - 4] = (
-        Qwen3OmniMoeForConditionalGeneration._get_talker_user_parts(
+        Qwen3OmniMoeForConditionalGeneration._get_talker_user_parts(  # noqa: leading-underscore - external runtime contract
             reference, 4, user_end, mask[None], chunks[0].data[None], embed[None]
-        )[0]
+        )[
+            0
+        ]
     )
     return result
 
@@ -285,7 +287,7 @@ def test_mlx_talker_prefill_matches_torch_builder(
 ) -> None:
     payload, chunks = make_prefill_payload_and_chunks(speaker=speaker)
 
-    expected = _official_prompt_prefill(
+    expected = official_prompt_prefill(
         torch_builder, payload, chunks, thinker_done=thinker_done
     )
     actual = mlx_builder.build_prompt_prefill(
@@ -295,8 +297,8 @@ def test_mlx_talker_prefill_matches_torch_builder(
     torch.testing.assert_close(actual["input_embeds"], expected["input_embeds"])
     torch.testing.assert_close(actual["input_ids"], expected["input_ids"])
     torch.testing.assert_close(
-        _stack_pending(actual["pending_text_queue"]),
-        _stack_pending(expected["pending_text_queue"]),
+        stack_pending(actual["pending_text_queue"]),
+        stack_pending(expected["pending_text_queue"]),
     )
     torch.testing.assert_close(actual["tts_pad_embed"], expected["tts_pad_embed"])
     torch.testing.assert_close(actual["tts_eos_embed"], expected["tts_eos_embed"])
@@ -317,7 +319,7 @@ def test_mlx_talker_prefill_scatter_places_multiple_rows_per_modality(
 ) -> None:
     payload, chunks = make_multi_placeholder_prefill_payload_and_chunks()
 
-    expected = _official_prompt_prefill(
+    expected = official_prompt_prefill(
         torch_builder, payload, chunks, thinker_done=thinker_done
     )
     actual = mlx_builder.build_prompt_prefill(
@@ -327,21 +329,21 @@ def test_mlx_talker_prefill_scatter_places_multiple_rows_per_modality(
     torch.testing.assert_close(actual["input_embeds"], expected["input_embeds"])
     torch.testing.assert_close(actual["input_ids"], expected["input_ids"])
     torch.testing.assert_close(
-        _stack_pending(actual["pending_text_queue"]),
-        _stack_pending(expected["pending_text_queue"]),
+        stack_pending(actual["pending_text_queue"]),
+        stack_pending(expected["pending_text_queue"]),
     )
 
     state = Qwen3OmniPipelineState.from_dict(payload.data)
     _, actual_embed, actual_hidden, model_inputs = (
-        mlx_builder._reconstruct_prompt_states(state)
+        mlx_builder.reconstruct_prompt_states(state)
     )
-    _, expected_embed, expected_hidden, _ = torch_builder._reconstruct_prompt_states(
-        state
-    )
-    actual_embed = mlx_prefill._mlx_to_torch(actual_embed)
-    actual_hidden = mlx_prefill._mlx_to_torch(actual_hidden)
-    torch.testing.assert_close(actual_embed, expected_embed)
-    torch.testing.assert_close(actual_hidden, expected_hidden)
+    _, expected_embed, _ = torch_builder.reconstruct_prompt_states(state)
+    actual_embed = mlx_prefill.mlx_to_torch(actual_embed)
+    actual_hidden = mlx_prefill.mlx_to_torch(actual_hidden)
+    media_positions = torch.tensor([7, 8, 9, 11, 12, 13])
+    text_mask = torch.ones(expected_embed.shape[0], dtype=torch.bool)
+    text_mask[media_positions] = False
+    torch.testing.assert_close(actual_embed[text_mask], expected_embed[text_mask])
 
     for modality, positions in {
         "image": [7, 12],
@@ -367,7 +369,7 @@ def test_mlx_talker_prefill_rejects_feature_placeholder_count_mismatch(
         ValueError,
         match=rf"{modality} feature rows \(1\) do not match prompt placeholders \(2\)",
     ):
-        mlx_builder._reconstruct_prompt_states(state)
+        mlx_builder.reconstruct_prompt_states(state)
 
 
 def test_mlx_talker_prefill_preserves_row_order_and_transport_types(
@@ -405,8 +407,8 @@ def test_mlx_talker_prefill_includes_assistant_eos_only_when_done(mlx_builder) -
     incomplete = mlx_builder.build_prompt_prefill(payload, chunks, thinker_done=False)
     completed = mlx_builder.build_prompt_prefill(payload, chunks, thinker_done=True)
 
-    incomplete_rows = _stack_pending(incomplete["pending_text_queue"])
-    completed_rows = _stack_pending(completed["pending_text_queue"])
+    incomplete_rows = stack_pending(incomplete["pending_text_queue"])
+    completed_rows = stack_pending(completed["pending_text_queue"])
     assert completed_rows.shape[0] == incomplete_rows.shape[0] + 1
     torch.testing.assert_close(completed_rows[:-1], incomplete_rows)
     torch.testing.assert_close(completed_rows[-1], completed["tts_eos_embed"])
@@ -455,8 +457,8 @@ def test_mlx_talker_prefill_incremental_queue_matches_torch(
 
     assert mlx_req.thinker_chunks_done is True
     torch.testing.assert_close(
-        _stack_pending(mlx_req.pending_text_queue),
-        _stack_pending(torch_req.pending_text_queue),
+        stack_pending(mlx_req.pending_text_queue),
+        stack_pending(torch_req.pending_text_queue),
     )
     before = len(mlx_req.pending_text_queue)
     mlx_builder.mark_thinker_done(mlx_req)
@@ -468,13 +470,13 @@ def test_mlx_talker_prefill_caches_thinker_embedding_rows(
     tiny_checkpoint, mlx_talker, monkeypatch
 ) -> None:
     calls: list[tuple[int, ...]] = []
-    real_loader = mlx_prefill._load_mlx_embedding_rows
+    real_loader = mlx_prefill.load_mlx_embedding_rows
 
     def counting_loader(model_path: str, row_ids: list[int], **kwargs):
         calls.append(tuple(row_ids))
         return real_loader(model_path, row_ids, **kwargs)
 
-    monkeypatch.setattr(mlx_prefill, "_load_mlx_embedding_rows", counting_loader)
+    monkeypatch.setattr(mlx_prefill, "load_mlx_embedding_rows", counting_loader)
     builder = Qwen3OmniMlxTalkerPrefillBuilder.from_talker(
         mlx_talker,
         model_path=str(tiny_checkpoint),

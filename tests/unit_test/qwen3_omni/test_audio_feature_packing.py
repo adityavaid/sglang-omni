@@ -51,7 +51,7 @@ def test_ragged_batch_preserves_sample_then_frame_order() -> None:
     feats = torch.zeros(2, MEL, 4)
     feats[0, :, :2] = torch.tensor([10.0, 11.0]).repeat(MEL, 1)
     feats[1, :, :3] = torch.tensor([20.0, 21.0, 22.0]).repeat(MEL, 1)
-    mask = _prefix_mask([2, 3], 4)
+    mask = prefix_mask([2, 3], 4)
 
     out = pack_padded_audio_features(feats, mask, mask.sum(dim=1))
 

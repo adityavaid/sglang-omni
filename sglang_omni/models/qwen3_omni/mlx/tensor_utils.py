@@ -12,6 +12,8 @@ def torch_to_mlx(tensor: torch.Tensor) -> mx.array:
     tensor = tensor.detach().cpu()
     if tensor.dtype in (torch.bfloat16, torch.float8_e4m3fn, torch.float8_e5m2):
         tensor = tensor.float()
+    else:
+        pass
     return mx.array(tensor.numpy())
 
 

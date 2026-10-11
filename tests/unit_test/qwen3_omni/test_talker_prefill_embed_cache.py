@@ -19,13 +19,13 @@ def model_dir(tmp_path):
     save_file({"thinker.model.embed_tokens.weight": weight}, str(tmp_path / shard))
     index = {"weight_map": {"thinker.model.embed_tokens.weight": shard}}
     (tmp_path / "model.safetensors.index.json").write_text(json.dumps(index))
-    talker_prefill._EMBED_SOURCE_CACHE.clear()  # noqa: leading-underscore  # production name
-    talker_prefill._EMBED_HANDLE_CACHE.clear()  # noqa: leading-underscore  # production name
+    talker_prefill.EMBED_SOURCE_CACHE.clear()  # noqa: leading-underscore  # production name
+    talker_prefill.EMBED_HANDLE_CACHE.clear()  # noqa: leading-underscore  # production name
     try:
         yield tmp_path
     finally:
-        talker_prefill._EMBED_SOURCE_CACHE.clear()  # noqa: leading-underscore  # production name
-        talker_prefill._EMBED_HANDLE_CACHE.clear()  # noqa: leading-underscore  # production name
+        talker_prefill.EMBED_SOURCE_CACHE.clear()  # noqa: leading-underscore  # production name
+        talker_prefill.EMBED_HANDLE_CACHE.clear()  # noqa: leading-underscore  # production name
 
 
 def test_rows_correct(model_dir):
@@ -72,8 +72,8 @@ def test_repeated_rows_stay_identical(model_dir):
 
 def test_no_index_fallback_cached(model_dir, monkeypatch):
     (model_dir / "model.safetensors.index.json").unlink()
-    talker_prefill._EMBED_SOURCE_CACHE.clear()  # noqa: leading-underscore  # production name
-    talker_prefill._EMBED_HANDLE_CACHE.clear()  # noqa: leading-underscore  # production name
+    talker_prefill.EMBED_SOURCE_CACHE.clear()  # noqa: leading-underscore  # production name
+    talker_prefill.EMBED_HANDLE_CACHE.clear()  # noqa: leading-underscore  # production name
     rows = talker_prefill.load_thinker_embedding_rows(str(model_dir), [5])
     expected = torch.arange(VOCAB * HIDDEN, dtype=torch.float32).reshape(VOCAB, HIDDEN)
     assert torch.equal(rows, expected[[5]])
@@ -90,7 +90,7 @@ def test_no_index_fallback_cached(model_dir, monkeypatch):
 
 
 def test_missing_weights_raises(tmp_path):
-    talker_prefill._EMBED_SOURCE_CACHE.clear()  # noqa: leading-underscore  # production name
+    talker_prefill.EMBED_SOURCE_CACHE.clear()  # noqa: leading-underscore  # production name
     with pytest.raises(KeyError):
         talker_prefill.load_thinker_embedding_rows(str(tmp_path), [0])
 
@@ -98,7 +98,7 @@ def test_missing_weights_raises(tmp_path):
 def test_fallback_scan_ignores_directories_named_safetensors(
     tmp_path, clear_embed_caches
 ):
-    weight = _dense_table()
+    weight = dense_table()
     (tmp_path / ".downloads" / "partial.safetensors").mkdir(parents=True)
     save_file(
         {"thinker.model.embed_tokens.weight": weight},
@@ -112,16 +112,16 @@ def test_fallback_scan_ignores_directories_named_safetensors(
 
 @pytest.fixture()
 def clear_embed_caches():
-    talker_prefill._EMBED_SOURCE_CACHE.clear()
-    talker_prefill._EMBED_HANDLE_CACHE.clear()
+    talker_prefill.EMBED_SOURCE_CACHE.clear()
+    talker_prefill.EMBED_HANDLE_CACHE.clear()
     try:
         yield
     finally:
-        talker_prefill._EMBED_SOURCE_CACHE.clear()
-        talker_prefill._EMBED_HANDLE_CACHE.clear()
+        talker_prefill.EMBED_SOURCE_CACHE.clear()
+        talker_prefill.EMBED_HANDLE_CACHE.clear()
 
 
-def _dense_table(offset: float = 0.0) -> torch.Tensor:
+def dense_table(offset: float = 0.0) -> torch.Tensor:
     return (
         torch.arange(VOCAB * HIDDEN, dtype=torch.float32).reshape(VOCAB, HIDDEN)
         + offset
@@ -140,8 +140,8 @@ def test_converted_component_export_reads_the_thinker_shard(
     talker prompt without any error.
     """
 
-    thinker = _dense_table()
-    talker = _dense_table(offset=10_000.0)
+    thinker = dense_table()
+    talker = dense_table(offset=10_000.0)
     (tmp_path / "thinker").mkdir()
     (tmp_path / "talker").mkdir()
     save_file(
@@ -202,9 +202,7 @@ def test_native_mlx_prefill_dequantizes_only_requested_thinker_rows(
     tmp_path, clear_embed_caches, monkeypatch
 ):
     mx = pytest.importorskip("mlx.core")
-    from sglang_omni.models.qwen3_omni.mlx.talker_prefill import (
-        _load_mlx_embedding_rows,
-    )
+    from sglang_omni.models.qwen3_omni.mlx.talker_prefill import load_mlx_embedding_rows
 
     group_size = 32
     dense = torch.arange(VOCAB * group_size, dtype=torch.float32).reshape(
@@ -234,7 +232,7 @@ def test_native_mlx_prefill_dequantizes_only_requested_thinker_rows(
         ),
     )
 
-    rows = _load_mlx_embedding_rows(str(tmp_path), [3, 0, 7])
+    rows = load_mlx_embedding_rows(str(tmp_path), [3, 0, 7])
 
     assert rows.shape == (3, group_size)
     torch.testing.assert_close(
@@ -249,9 +247,7 @@ def test_bfloat16_packed_metadata_rows_work_for_torch_and_mlx_consumers(
     tmp_path, clear_embed_caches, monkeypatch
 ):
     mx = pytest.importorskip("mlx.core")
-    from sglang_omni.models.qwen3_omni.mlx.talker_prefill import (
-        _load_mlx_embedding_rows,
-    )
+    from sglang_omni.models.qwen3_omni.mlx.talker_prefill import load_mlx_embedding_rows
 
     group_size = 32
     row_ids = [3, 0, 7]
@@ -288,9 +284,9 @@ def test_bfloat16_packed_metadata_rows_work_for_torch_and_mlx_consumers(
         ),
     )
 
-    source = talker_prefill._resolve_embed_source(str(tmp_path))
-    torch_rows = talker_prefill._packed_embedding_rows(str(tmp_path), source, row_ids)
-    mlx_rows = _load_mlx_embedding_rows(str(tmp_path), row_ids)
+    source = talker_prefill.resolve_embed_source(str(tmp_path))
+    torch_rows = talker_prefill.packed_embedding_rows(str(tmp_path), source, row_ids)
+    mlx_rows = load_mlx_embedding_rows(str(tmp_path), row_ids)
     reference = mx.dequantize(
         packed[mx.array(row_ids)],
         bf16_scales[mx.array(row_ids)],
@@ -314,17 +310,15 @@ def test_bfloat16_packed_metadata_rows_work_for_torch_and_mlx_consumers(
 
 def test_native_mlx_prefill_reads_bfloat16_thinker_rows(tmp_path, clear_embed_caches):
     mx = pytest.importorskip("mlx.core")
-    from sglang_omni.models.qwen3_omni.mlx.talker_prefill import (
-        _load_mlx_embedding_rows,
-    )
+    from sglang_omni.models.qwen3_omni.mlx.talker_prefill import load_mlx_embedding_rows
 
-    weight = _dense_table().to(torch.bfloat16)
+    weight = dense_table().to(torch.bfloat16)
     save_file(
         {"thinker.model.embed_tokens.weight": weight},
         str(tmp_path / "model.safetensors"),
     )
 
-    rows = _load_mlx_embedding_rows(str(tmp_path), [3, 0, 7])
+    rows = load_mlx_embedding_rows(str(tmp_path), [3, 0, 7])
 
     assert rows.dtype == mx.bfloat16
     torch.testing.assert_close(
@@ -339,7 +333,7 @@ def test_native_mlx_prefill_uses_supported_torch_safetensors_slicing(
     mx = pytest.importorskip("mlx.core")
     from sglang_omni.models.qwen3_omni.mlx import talker_prefill as mlx_prefill
 
-    weight = _dense_table().to(torch.bfloat16)
+    weight = dense_table().to(torch.bfloat16)
     save_file(
         {"thinker.model.embed_tokens.weight": weight},
         str(tmp_path / "model.safetensors"),
@@ -354,7 +348,7 @@ def test_native_mlx_prefill_uses_supported_torch_safetensors_slicing(
 
     monkeypatch.setattr(talker_prefill, "safe_open", recording_safe_open)
 
-    rows = mlx_prefill._load_mlx_embedding_rows(str(tmp_path), [3, 0, 7])
+    rows = mlx_prefill.load_mlx_embedding_rows(str(tmp_path), [3, 0, 7])
 
     assert calls == [
         {"framework": "pt", "device": "cpu"},
@@ -373,10 +367,10 @@ def test_native_mlx_prefill_reuses_supported_safetensors_handle_for_unseen_rows(
     pytest.importorskip("mlx.core")
     from sglang_omni.models.qwen3_omni.mlx import talker_prefill as mlx_prefill
 
-    weight = _dense_table().to(torch.bfloat16)
+    weight = dense_table().to(torch.bfloat16)
     shard = tmp_path / "model.safetensors"
     save_file({"thinker.model.embed_tokens.weight": weight}, str(shard))
-    talker_prefill._resolve_embed_source(str(tmp_path))
+    talker_prefill.resolve_embed_source(str(tmp_path))
 
     calls = {"safe_open": 0}
     real_safe_open = talker_prefill.safe_open
@@ -393,10 +387,10 @@ def test_native_mlx_prefill_reuses_supported_safetensors_handle_for_unseen_rows(
         speaker_map={},
     )
 
-    first = builder._project_assistant_chunk(
+    first = builder.project_assistant_chunk(
         SimpleNamespace(data=None, metadata={"token_id": 3})
     )
-    second = builder._project_assistant_chunk(
+    second = builder.project_assistant_chunk(
         SimpleNamespace(data=None, metadata={"token_id": 7})
     )
 

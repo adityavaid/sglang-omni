@@ -5,71 +5,91 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, TypeVar
 
 _DEFAULT_VISION_POSITION_EMBEDDINGS = 48 * 48
 
+ConfigValue = TypeVar("ConfigValue")
 
-def _require(raw: Mapping[str, Any], key: str, path: str) -> Any:
+
+def require(raw: Mapping[str, ConfigValue], key: str, path: str) -> ConfigValue:
     if key not in raw:
         raise KeyError(f"missing required Qwen3-Omni config field: {path}")
+    else:
+        pass
     return raw[key]
 
 
-def _require_expert_count(raw: Mapping[str, Any], path: str) -> int:
+def require_expert_count(raw: Mapping[str, Any], path: str) -> int:
     """Resolve the MoE expert count under either canonical or alias name."""
 
     if "num_experts" in raw:
         return int(raw["num_experts"])
+    else:
+        pass
     if "num_local_experts" in raw:
         return int(raw["num_local_experts"])
+    else:
+        pass
     raise KeyError(f"missing required Qwen3-Omni config field: {path}.num_experts")
 
 
-def _rope_container(raw: Mapping[str, Any]) -> Mapping[str, Any]:
+def rope_container(raw: Mapping[str, Any]) -> Mapping[str, Any]:
     """Return the rope sub-dict under either the normalized or legacy key."""
 
     normalized = raw.get("rope_parameters")
     if normalized is not None:
         return normalized
+    else:
+        pass
     legacy = raw.get("rope_scaling")
     if legacy is not None:
         return legacy
+    else:
+        pass
     return {}
 
 
-def _require_rope_theta(raw: Mapping[str, Any], path: str) -> float:
+def require_rope_theta(raw: Mapping[str, Any], path: str) -> float:
     """Read ``rope_theta`` from the normalized rope dict or the legacy sibling."""
 
-    rope = _rope_container(raw)
+    rope = rope_container(raw)
     if "rope_theta" in rope:
         return float(rope["rope_theta"])
+    else:
+        pass
     if "rope_theta" in raw:
         return float(raw["rope_theta"])
+    else:
+        pass
     raise KeyError(f"missing required Qwen3-Omni config field: {path}.rope_theta")
 
 
-def _require_mrope_section(raw: Mapping[str, Any], path: str) -> tuple[int, ...]:
+def require_mrope_section(raw: Mapping[str, Any], path: str) -> tuple[int, ...]:
     """Read the required ``mrope_section`` from either rope layout."""
 
-    rope = _rope_container(raw)
+    rope = rope_container(raw)
     mrope = rope.get("mrope_section")
     if mrope is None:
         mrope = raw.get("mrope_section")
+    else:
+        pass
     if mrope is None:
         raise KeyError(
             f"missing required Qwen3-Omni config field: {path}.mrope_section"
         )
+    else:
+        pass
     return tuple(int(v) for v in mrope)
 
 
-def _require_int_tuple(raw: Mapping[str, Any], key: str, path: str) -> tuple[int, ...]:
-    values = _require(raw, key, path)
+def require_int_tuple(raw: Mapping[str, Any], key: str, path: str) -> tuple[int, ...]:
+    values = require(raw, key, path)
     return tuple(int(v) for v in values)
 
 
-def _vision_deepstack_indexes(raw: Mapping[str, Any], path: str) -> tuple[int, ...]:
-    return _require_int_tuple(raw, "deepstack_visual_indexes", path)
+def vision_deepstack_indexes(raw: Mapping[str, Any], path: str) -> tuple[int, ...]:
+    return require_int_tuple(raw, "deepstack_visual_indexes", path)
 
 
 @dataclass(frozen=True)
@@ -103,39 +123,39 @@ class MoeTextConfig:
     def from_dict(cls, raw: Mapping[str, Any], *, path: str) -> "MoeTextConfig":
         shared = raw.get("shared_expert_intermediate_size")
         return cls(
-            hidden_size=int(_require(raw, "hidden_size", f"{path}.hidden_size")),
-            head_dim=int(_require(raw, "head_dim", f"{path}.head_dim")),
+            hidden_size=int(require(raw, "hidden_size", f"{path}.hidden_size")),
+            head_dim=int(require(raw, "head_dim", f"{path}.head_dim")),
             num_attention_heads=int(
-                _require(raw, "num_attention_heads", f"{path}.num_attention_heads")
+                require(raw, "num_attention_heads", f"{path}.num_attention_heads")
             ),
             num_key_value_heads=int(
-                _require(raw, "num_key_value_heads", f"{path}.num_key_value_heads")
+                require(raw, "num_key_value_heads", f"{path}.num_key_value_heads")
             ),
             num_hidden_layers=int(
-                _require(raw, "num_hidden_layers", f"{path}.num_hidden_layers")
+                require(raw, "num_hidden_layers", f"{path}.num_hidden_layers")
             ),
             intermediate_size=int(
-                _require(raw, "intermediate_size", f"{path}.intermediate_size")
+                require(raw, "intermediate_size", f"{path}.intermediate_size")
             ),
             moe_intermediate_size=int(
-                _require(raw, "moe_intermediate_size", f"{path}.moe_intermediate_size")
+                require(raw, "moe_intermediate_size", f"{path}.moe_intermediate_size")
             ),
-            num_experts=_require_expert_count(raw, path),
+            num_experts=require_expert_count(raw, path),
             num_experts_per_tok=int(
-                _require(raw, "num_experts_per_tok", f"{path}.num_experts_per_tok")
+                require(raw, "num_experts_per_tok", f"{path}.num_experts_per_tok")
             ),
             norm_topk_prob=bool(raw.get("norm_topk_prob", False)),
             decoder_sparse_step=int(raw.get("decoder_sparse_step", 1)),
             mlp_only_layers=tuple(raw.get("mlp_only_layers") or ()),
             rms_norm_eps=float(raw.get("rms_norm_eps", 1e-6)),
-            vocab_size=int(_require(raw, "vocab_size", f"{path}.vocab_size")),
+            vocab_size=int(require(raw, "vocab_size", f"{path}.vocab_size")),
             max_position_embeddings=int(
-                _require(
+                require(
                     raw, "max_position_embeddings", f"{path}.max_position_embeddings"
                 )
             ),
-            rope_theta=_require_rope_theta(raw, path),
-            mrope_section=_require_mrope_section(raw, path),
+            rope_theta=require_rope_theta(raw, path),
+            mrope_section=require_mrope_section(raw, path),
             tie_word_embeddings=bool(raw.get("tie_word_embeddings", False)),
             shared_expert_intermediate_size=(
                 int(shared) if shared is not None else None
@@ -163,31 +183,31 @@ class CodePredictorConfig:
     @classmethod
     def from_dict(cls, raw: Mapping[str, Any], *, path: str) -> "CodePredictorConfig":
         return cls(
-            hidden_size=int(_require(raw, "hidden_size", f"{path}.hidden_size")),
-            head_dim=int(_require(raw, "head_dim", f"{path}.head_dim")),
+            hidden_size=int(require(raw, "hidden_size", f"{path}.hidden_size")),
+            head_dim=int(require(raw, "head_dim", f"{path}.head_dim")),
             num_attention_heads=int(
-                _require(raw, "num_attention_heads", f"{path}.num_attention_heads")
+                require(raw, "num_attention_heads", f"{path}.num_attention_heads")
             ),
             num_key_value_heads=int(
-                _require(raw, "num_key_value_heads", f"{path}.num_key_value_heads")
+                require(raw, "num_key_value_heads", f"{path}.num_key_value_heads")
             ),
             num_hidden_layers=int(
-                _require(raw, "num_hidden_layers", f"{path}.num_hidden_layers")
+                require(raw, "num_hidden_layers", f"{path}.num_hidden_layers")
             ),
             intermediate_size=int(
-                _require(raw, "intermediate_size", f"{path}.intermediate_size")
+                require(raw, "intermediate_size", f"{path}.intermediate_size")
             ),
             num_code_groups=int(
-                _require(raw, "num_code_groups", f"{path}.num_code_groups")
+                require(raw, "num_code_groups", f"{path}.num_code_groups")
             ),
-            vocab_size=int(_require(raw, "vocab_size", f"{path}.vocab_size")),
+            vocab_size=int(require(raw, "vocab_size", f"{path}.vocab_size")),
             max_position_embeddings=int(
-                _require(
+                require(
                     raw, "max_position_embeddings", f"{path}.max_position_embeddings"
                 )
             ),
             rms_norm_eps=float(raw.get("rms_norm_eps", 1e-6)),
-            rope_theta=_require_rope_theta(raw, path),
+            rope_theta=require_rope_theta(raw, path),
         )
 
 
@@ -209,31 +229,31 @@ class VisionConfig:
     @classmethod
     def from_dict(cls, raw: Mapping[str, Any], *, path: str) -> "VisionConfig":
         return cls(
-            depth=int(_require(raw, "depth", f"{path}.depth")),
-            hidden_size=int(_require(raw, "hidden_size", f"{path}.hidden_size")),
+            depth=int(require(raw, "depth", f"{path}.depth")),
+            hidden_size=int(require(raw, "hidden_size", f"{path}.hidden_size")),
             intermediate_size=int(
-                _require(raw, "intermediate_size", f"{path}.intermediate_size")
+                require(raw, "intermediate_size", f"{path}.intermediate_size")
             ),
-            num_heads=int(_require(raw, "num_heads", f"{path}.num_heads")),
-            in_channels=int(_require(raw, "in_channels", f"{path}.in_channels")),
-            patch_size=int(_require(raw, "patch_size", f"{path}.patch_size")),
+            num_heads=int(require(raw, "num_heads", f"{path}.num_heads")),
+            in_channels=int(require(raw, "in_channels", f"{path}.in_channels")),
+            patch_size=int(require(raw, "patch_size", f"{path}.patch_size")),
             temporal_patch_size=int(
-                _require(raw, "temporal_patch_size", f"{path}.temporal_patch_size")
+                require(raw, "temporal_patch_size", f"{path}.temporal_patch_size")
             ),
             spatial_merge_size=int(
-                _require(raw, "spatial_merge_size", f"{path}.spatial_merge_size")
+                require(raw, "spatial_merge_size", f"{path}.spatial_merge_size")
             ),
             out_hidden_size=int(
-                _require(raw, "out_hidden_size", f"{path}.out_hidden_size")
+                require(raw, "out_hidden_size", f"{path}.out_hidden_size")
             ),
-            hidden_act=str(_require(raw, "hidden_act", f"{path}.hidden_act")),
+            hidden_act=str(require(raw, "hidden_act", f"{path}.hidden_act")),
             num_position_embeddings=int(
                 raw.get(
                     "num_position_embeddings",
                     _DEFAULT_VISION_POSITION_EMBEDDINGS,
                 )
             ),
-            deepstack_visual_indexes=_vision_deepstack_indexes(
+            deepstack_visual_indexes=vision_deepstack_indexes(
                 raw, f"{path}.deepstack_visual_indexes"
             ),
         )
@@ -258,40 +278,38 @@ class AudioConfig:
     @classmethod
     def from_dict(cls, raw: Mapping[str, Any], *, path: str) -> "AudioConfig":
         return cls(
-            d_model=int(_require(raw, "d_model", f"{path}.d_model")),
+            d_model=int(require(raw, "d_model", f"{path}.d_model")),
             encoder_attention_heads=int(
-                _require(
+                require(
                     raw, "encoder_attention_heads", f"{path}.encoder_attention_heads"
                 )
             ),
             encoder_layers=int(
-                _require(raw, "encoder_layers", f"{path}.encoder_layers")
+                require(raw, "encoder_layers", f"{path}.encoder_layers")
             ),
             encoder_ffn_dim=int(
-                _require(raw, "encoder_ffn_dim", f"{path}.encoder_ffn_dim")
+                require(raw, "encoder_ffn_dim", f"{path}.encoder_ffn_dim")
             ),
-            num_mel_bins=int(_require(raw, "num_mel_bins", f"{path}.num_mel_bins")),
+            num_mel_bins=int(require(raw, "num_mel_bins", f"{path}.num_mel_bins")),
             downsample_hidden_size=int(
-                _require(
-                    raw, "downsample_hidden_size", f"{path}.downsample_hidden_size"
-                )
+                require(raw, "downsample_hidden_size", f"{path}.downsample_hidden_size")
             ),
             max_source_positions=int(
-                _require(raw, "max_source_positions", f"{path}.max_source_positions")
+                require(raw, "max_source_positions", f"{path}.max_source_positions")
             ),
-            output_dim=int(_require(raw, "output_dim", f"{path}.output_dim")),
+            output_dim=int(require(raw, "output_dim", f"{path}.output_dim")),
             activation_function=str(
-                _require(raw, "activation_function", f"{path}.activation_function")
+                require(raw, "activation_function", f"{path}.activation_function")
             ),
             scale_embedding=bool(
-                _require(raw, "scale_embedding", f"{path}.scale_embedding")
+                require(raw, "scale_embedding", f"{path}.scale_embedding")
             ),
-            n_window=int(_require(raw, "n_window", f"{path}.n_window")),
+            n_window=int(require(raw, "n_window", f"{path}.n_window")),
             n_window_infer=int(
-                _require(raw, "n_window_infer", f"{path}.n_window_infer")
+                require(raw, "n_window_infer", f"{path}.n_window_infer")
             ),
             conv_chunksize=int(
-                _require(raw, "conv_chunksize", f"{path}.conv_chunksize")
+                require(raw, "conv_chunksize", f"{path}.conv_chunksize")
             ),
         )
 
@@ -319,43 +337,43 @@ class Code2WavConfig:
 
     @classmethod
     def from_dict(cls, raw: Mapping[str, Any], *, path: str) -> "Code2WavConfig":
-        sliding_window = _require(raw, "sliding_window", f"{path}.sliding_window")
+        sliding_window = require(raw, "sliding_window", f"{path}.sliding_window")
         return cls(
-            hidden_size=int(_require(raw, "hidden_size", f"{path}.hidden_size")),
+            hidden_size=int(require(raw, "hidden_size", f"{path}.hidden_size")),
             intermediate_size=int(
-                _require(raw, "intermediate_size", f"{path}.intermediate_size")
+                require(raw, "intermediate_size", f"{path}.intermediate_size")
             ),
             num_hidden_layers=int(
-                _require(raw, "num_hidden_layers", f"{path}.num_hidden_layers")
+                require(raw, "num_hidden_layers", f"{path}.num_hidden_layers")
             ),
             num_attention_heads=int(
-                _require(raw, "num_attention_heads", f"{path}.num_attention_heads")
+                require(raw, "num_attention_heads", f"{path}.num_attention_heads")
             ),
             num_key_value_heads=int(
-                _require(raw, "num_key_value_heads", f"{path}.num_key_value_heads")
+                require(raw, "num_key_value_heads", f"{path}.num_key_value_heads")
             ),
             rms_norm_eps=float(raw.get("rms_norm_eps", 1e-5)),
-            rope_theta=_require_rope_theta(raw, path),
+            rope_theta=require_rope_theta(raw, path),
             attention_bias=bool(raw.get("attention_bias", False)),
             attention_dropout=float(raw.get("attention_dropout", 0.0)),
             hidden_act=str(raw.get("hidden_act", "silu")),
             max_position_embeddings=int(
-                _require(
+                require(
                     raw, "max_position_embeddings", f"{path}.max_position_embeddings"
                 )
             ),
             sliding_window=(
                 int(sliding_window) if sliding_window is not None else None
             ),
-            codebook_size=int(_require(raw, "codebook_size", f"{path}.codebook_size")),
+            codebook_size=int(require(raw, "codebook_size", f"{path}.codebook_size")),
             num_quantizers=int(
-                _require(raw, "num_quantizers", f"{path}.num_quantizers")
+                require(raw, "num_quantizers", f"{path}.num_quantizers")
             ),
-            upsampling_ratios=_require_int_tuple(
+            upsampling_ratios=require_int_tuple(
                 raw, "upsampling_ratios", f"{path}.upsampling_ratios"
             ),
-            decoder_dim=int(_require(raw, "decoder_dim", f"{path}.decoder_dim")),
-            upsample_rates=_require_int_tuple(
+            decoder_dim=int(require(raw, "decoder_dim", f"{path}.decoder_dim")),
+            upsample_rates=require_int_tuple(
                 raw, "upsample_rates", f"{path}.upsample_rates"
             ),
             layer_scale_initial_scale=float(raw.get("layer_scale_initial_scale", 0.01)),
@@ -370,7 +388,7 @@ class ThinkerConfig:
 
     @classmethod
     def from_dict(cls, raw: Mapping[str, Any], *, path: str) -> "ThinkerConfig":
-        text_raw = _require(raw, "text_config", f"{path}.text_config")
+        text_raw = require(raw, "text_config", f"{path}.text_config")
         return cls(
             text_config=MoeTextConfig.from_dict(text_raw, path=f"{path}.text_config")
         )
@@ -389,15 +407,15 @@ class TalkerConfig:
 
     @classmethod
     def from_dict(cls, raw: Mapping[str, Any], *, path: str) -> "TalkerConfig":
-        text_raw = _require(raw, "text_config", f"{path}.text_config")
-        predictor_raw = _require(
+        text_raw = require(raw, "text_config", f"{path}.text_config")
+        predictor_raw = require(
             raw, "code_predictor_config", f"{path}.code_predictor_config"
         )
         predictor = CodePredictorConfig.from_dict(
             predictor_raw, path=f"{path}.code_predictor_config"
         )
         num_code_groups = int(
-            _require(raw, "num_code_groups", f"{path}.num_code_groups")
+            require(raw, "num_code_groups", f"{path}.num_code_groups")
         )
         # The talker embeds group 0 with its own codec table and delegates the
         # remaining groups to the predictor's per-group tables and heads, so a
@@ -407,6 +425,8 @@ class TalkerConfig:
                 f"{path}.code_predictor_config.num_code_groups="
                 f"{predictor.num_code_groups}"
             )
+        else:
+            pass
         thinker_hidden_size = raw.get("thinker_hidden_size")
         return cls(
             text_config=MoeTextConfig.from_dict(text_raw, path=f"{path}.text_config"),
@@ -431,8 +451,8 @@ class QuantizationConfig:
         cls, raw: Mapping[str, Any], *, path: str = "quantization"
     ) -> "QuantizationConfig":
         return cls(
-            bits=int(_require(raw, "bits", f"{path}.bits")),
-            group_size=int(_require(raw, "group_size", f"{path}.group_size")),
+            bits=int(require(raw, "bits", f"{path}.bits")),
+            group_size=int(require(raw, "group_size", f"{path}.group_size")),
             mode=str(raw.get("mode", "affine")),
         )
 
@@ -450,16 +470,16 @@ class Qwen3OmniMlxConfig:
 
     @classmethod
     def from_dict(cls, raw: Mapping[str, Any]) -> "Qwen3OmniMlxConfig":
-        thinker_raw = _require(raw, "thinker_config", "thinker_config")
-        talker_raw = _require(raw, "talker_config", "talker_config")
-        code2wav_raw = _require(raw, "code2wav_config", "code2wav_config")
+        thinker_raw = require(raw, "thinker_config", "thinker_config")
+        talker_raw = require(raw, "talker_config", "talker_config")
+        code2wav_raw = require(raw, "code2wav_config", "code2wav_config")
         quant_raw = raw.get("quantization")
         thinker = ThinkerConfig.from_dict(thinker_raw, path="thinker")
         talker = TalkerConfig.from_dict(talker_raw, path="talker")
-        vision_raw = _require(
+        vision_raw = require(
             thinker_raw, "vision_config", "thinker_config.vision_config"
         )
-        audio_raw = _require(thinker_raw, "audio_config", "thinker_config.audio_config")
+        audio_raw = require(thinker_raw, "audio_config", "thinker_config.audio_config")
         vision = VisionConfig.from_dict(vision_raw, path="thinker.vision_config")
         audio = AudioConfig.from_dict(audio_raw, path="thinker.audio_config")
         code2wav = Code2WavConfig.from_dict(code2wav_raw, path="code2wav_config")
@@ -469,6 +489,8 @@ class Qwen3OmniMlxConfig:
                 f"{code2wav.num_quantizers} disagrees with "
                 f"talker_config.num_code_groups={talker.num_code_groups}"
             )
+        else:
+            pass
         return cls(
             thinker=thinker,
             talker=talker,

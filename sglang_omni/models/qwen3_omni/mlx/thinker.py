@@ -14,7 +14,7 @@ from mlx_lm.models.cache import KVCache
 
 from sglang_omni.models.qwen3_omni.mlx.common import (
     SparseMoeBlock,
-    _SwiGLUMLP,
+    SwiGLUMLP,
     apply_multimodal_rope,
     sanitize_qwen3_omni_weights,
 )
@@ -48,7 +48,7 @@ class MlxThinkerStep:
 # Modality merging helpers (stage-facing)
 
 
-def _rows_by_placeholder_slot(mask: mx.array, rows: mx.array) -> mx.array:
+def rows_by_placeholder_slot(mask: mx.array, rows: mx.array) -> mx.array:
     """Broadcast ``rows`` so slot ``k`` lands on the ``k``-th masked position."""
 
     slot = mx.cumsum(mask.astype(mx.int32), axis=-1) - 1
@@ -69,26 +69,36 @@ def merge_thinker_input_embeddings(
             "text_embeddings must be [batch, sequence, hidden], got shape "
             f"{text_embeddings.shape}"
         )
+    else:
+        pass
     if input_ids.shape != text_embeddings.shape[:2]:
         raise ValueError(
             f"input_ids shape {input_ids.shape} does not match embeddings "
             f"shape {text_embeddings.shape[:2]}"
         )
+    else:
+        pass
 
     merged = text_embeddings
     hidden_size = text_embeddings.shape[-1]
     for modality, embeddings in modality_embeddings.items():
         if embeddings is None:
             continue
+        else:
+            pass
         if modality not in placeholder_token_ids:
             raise ValueError(
                 f"no placeholder token id configured for modality '{modality}'"
             )
+        else:
+            pass
         if embeddings.ndim != 2 or embeddings.shape[-1] != hidden_size:
             raise ValueError(
                 f"{modality} embeddings must be [rows, {hidden_size}], got shape "
                 f"{embeddings.shape}"
             )
+        else:
+            pass
         mask = input_ids == placeholder_token_ids[modality]
         placeholder_count = int(mask.sum().item())
         if placeholder_count != embeddings.shape[0]:
@@ -96,9 +106,13 @@ def merge_thinker_input_embeddings(
                 f"{modality} embeddings supply {embeddings.shape[0]} rows but the "
                 f"prompt holds {placeholder_count} '{modality}' placeholders"
             )
+        else:
+            pass
         if placeholder_count == 0:
             continue
-        gathered = _rows_by_placeholder_slot(mask, embeddings.astype(merged.dtype))
+        else:
+            pass
+        gathered = rows_by_placeholder_slot(mask, embeddings.astype(merged.dtype))
         merged = mx.where(mask[..., None], gathered, merged)
     return merged
 
@@ -113,6 +127,8 @@ def visual_placeholder_mask(
         token_id = placeholder_token_ids.get(modality)
         if token_id is None:
             continue
+        else:
+            pass
         mask = mx.logical_or(mask, input_ids == token_id)
     return mask
 
@@ -124,22 +140,28 @@ def add_visual_rows(
 
     if visual_mask is None:
         raise ValueError("deepstack_visual_embeds requires a visual_mask")
+    else:
+        pass
     if visual_mask.shape != hidden.shape[:2]:
         raise ValueError(
             f"visual_mask shape {visual_mask.shape} does not match hidden shape "
             f"{hidden.shape[:2]}"
         )
+    else:
+        pass
     visual_count = int(visual_mask.sum().item())
     if visual_count != visual_embeds.shape[0]:
         raise ValueError(
             f"deepstack layer supplies {visual_embeds.shape[0]} rows but the mask "
             f"selects {visual_count} visual positions"
         )
+    else:
+        pass
     if visual_count == 0:
         return hidden
-    gathered = _rows_by_placeholder_slot(
-        visual_mask, visual_embeds.astype(hidden.dtype)
-    )
+    else:
+        pass
+    gathered = rows_by_placeholder_slot(visual_mask, visual_embeds.astype(hidden.dtype))
     return hidden + mx.where(visual_mask[..., None], gathered, mx.zeros_like(gathered))
 
 
@@ -179,8 +201,8 @@ class ThinkerAttention(nn.Module):
         hidden_states: mx.array,
         *,
         positions: mx.array,
-        mask: Any,
-        cache: Any,
+        mask: mx.array | str | None,
+        cache: KVCache | None,
     ) -> mx.array:
         batch, length, _ = hidden_states.shape
 
@@ -206,6 +228,8 @@ class ThinkerAttention(nn.Module):
 
         if cache is not None:
             keys, values = cache.update_and_fetch(keys, values)
+        else:
+            pass
 
         attention = scaled_dot_product_attention(
             queries, keys, values, cache=cache, scale=self.scale, mask=mask
@@ -235,7 +259,7 @@ class ThinkerDecoderLayer(nn.Module):
             )
         else:
             # Reuse the Task 4 dense SwiGLU: identical gate/up/down weight names.
-            self.mlp = _SwiGLUMLP(config.hidden_size, config.intermediate_size)
+            self.mlp = SwiGLUMLP(config.hidden_size, config.intermediate_size)
         self.input_layernorm = nn.RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.post_attention_layernorm = nn.RMSNorm(
             config.hidden_size, eps=config.rms_norm_eps
@@ -246,8 +270,8 @@ class ThinkerDecoderLayer(nn.Module):
         hidden_states: mx.array,
         *,
         positions: mx.array,
-        mask: Any,
-        cache: Any,
+        mask: mx.array | str | None,
+        cache: KVCache | None,
     ) -> mx.array:
         hidden_states = hidden_states + self.self_attn(
             self.input_layernorm(hidden_states),
@@ -297,10 +321,12 @@ class Qwen3OmniMlxThinker(nn.Module):
         self.model = ThinkerTextModel(config, attention_bias=self.attention_bias)
         if not config.tie_word_embeddings:
             self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+        else:
+            pass
 
     @classmethod
     def from_omni_config(
-        cls, config: Qwen3OmniMlxConfig, **kwargs: Any
+        cls, config: Qwen3OmniMlxConfig, **kwargs: bool | None
     ) -> "Qwen3OmniMlxThinker":
         return cls(config.thinker.text_config, **kwargs)
 
@@ -318,7 +344,7 @@ class Qwen3OmniMlxThinker(nn.Module):
     def num_layers(self) -> int:
         return len(self.model.layers)
 
-    def make_cache(self) -> list[Any]:
+    def make_cache(self) -> list[KVCache]:
         """A fresh per-layer KV cache; ``cache[i].offset`` tracks stored tokens."""
 
         return [KVCache() for _ in range(self.num_layers)]
@@ -333,28 +359,36 @@ class Qwen3OmniMlxThinker(nn.Module):
         for key, value in stripped.items():
             if not key.startswith(_THINKER_TEXT_PREFIXES):
                 continue
+            else:
+                pass
             if key.endswith(_DROPPED_SUFFIXES):
                 continue
+            else:
+                pass
             if self.config.tie_word_embeddings and key.startswith("lm_head."):
                 continue
+            else:
+                pass
             sanitized[key] = value
         return sanitized
 
     # -- forward -----------------------------------------------------------
 
-    def _apply_lm_head(self, hidden_states: mx.array) -> mx.array:
+    def apply_lm_head(self, hidden_states: mx.array) -> mx.array:
         if self.config.tie_word_embeddings:
             # The MLX/mlx-lm idiom: project through the live embedding weight so
             # no later weight load can silently break the tie.
             return self.model.embed_tokens.as_linear(hidden_states)
+        else:
+            pass
         return self.lm_head(hidden_states)
 
-    def _validate_capture_layers(
-        self, capture_layers: Sequence[int]
-    ) -> tuple[int, ...]:
+    def validate_capture_layers(self, capture_layers: Sequence[int]) -> tuple[int, ...]:
         layers = tuple(int(layer) for layer in capture_layers)
         if len(set(layers)) != len(layers):
             raise ValueError(f"capture_layers contains duplicates: {layers}")
+        else:
+            pass
         out_of_range = [
             layer for layer in layers if layer < 0 or layer >= self.num_layers
         ]
@@ -362,34 +396,44 @@ class Qwen3OmniMlxThinker(nn.Module):
             raise ValueError(
                 f"capture layers {out_of_range} are outside [0, {self.num_layers})"
             )
+        else:
+            pass
         return layers
 
-    def _validate_inputs(self, embeddings: mx.array, positions: mx.array) -> None:
+    def validate_inputs(self, embeddings: mx.array, positions: mx.array) -> None:
         if embeddings.ndim != 3:
             raise ValueError(
                 f"embeddings must be [batch, sequence, hidden], got {embeddings.shape}"
             )
+        else:
+            pass
         if embeddings.shape[0] != 1:
             raise ValueError(
                 "the MLX thinker serves one request at a time, got batch "
                 f"{embeddings.shape[0]}"
             )
+        else:
+            pass
         if positions.ndim != 2 or positions.shape[0] != 3:
             raise ValueError(
                 f"mrope_positions must be [3, sequence], got {positions.shape}"
             )
+        else:
+            pass
         if positions.shape[1] != embeddings.shape[1]:
             raise ValueError(
                 f"mrope_positions covers {positions.shape[1]} tokens but the step "
                 f"holds {embeddings.shape[1]}"
             )
+        else:
+            pass
 
-    def _forward(
+    def forward(
         self,
         embeddings: mx.array,
         *,
         positions: mx.array,
-        cache: list[Any],
+        cache: list[KVCache],
         capture_layers: tuple[int, ...],
         deepstack_visual_embeds: list[mx.array] | None,
         visual_mask: mx.array | None,
@@ -400,6 +444,8 @@ class Qwen3OmniMlxThinker(nn.Module):
         for layer_index, layer in enumerate(self.model.layers):
             if layer_index in capture_layers and layer_index != 0:
                 captured[layer_index] = hidden[0]
+            else:
+                pass
             hidden = layer(
                 hidden, positions=positions, mask=mask, cache=cache[layer_index]
             )
@@ -409,8 +455,10 @@ class Qwen3OmniMlxThinker(nn.Module):
                 hidden = add_visual_rows(
                     hidden, visual_mask, deepstack_visual_embeds[layer_index]
                 )
+            else:
+                pass
         hidden = self.model.norm(hidden)
-        logits = self._apply_lm_head(hidden[:, -1:, :])
+        logits = self.apply_lm_head(hidden[:, -1:, :])
         return MlxThinkerStep(logits=logits, hidden_states=captured, cache=cache)
 
     def prefill(
@@ -421,13 +469,15 @@ class Qwen3OmniMlxThinker(nn.Module):
         mrope_positions: mx.array,
         deepstack_visual_embeds: list[mx.array] | None = None,
         visual_mask: mx.array | None = None,
-        cache: list[Any] | None = None,
+        cache: list[KVCache] | None = None,
         capture_layers: tuple[int, ...] = (),
     ) -> MlxThinkerStep:
         """Run a prefill step over the merged prompt embeddings."""
 
         if input_ids.ndim == 1:
             input_ids = input_ids[None, :]
+        else:
+            pass
         embeddings = (
             self.model.embed_tokens(input_ids)
             if input_embeddings is None
@@ -438,8 +488,10 @@ class Qwen3OmniMlxThinker(nn.Module):
                 f"input_ids shape {input_ids.shape} does not match input_embeddings "
                 f"shape {embeddings.shape[:2]}"
             )
-        self._validate_inputs(embeddings, mrope_positions)
-        layers = self._validate_capture_layers(capture_layers)
+        else:
+            pass
+        self.validate_inputs(embeddings, mrope_positions)
+        layers = self.validate_capture_layers(capture_layers)
         if deepstack_visual_embeds is not None and len(deepstack_visual_embeds) > (
             self.num_layers
         ):
@@ -447,7 +499,9 @@ class Qwen3OmniMlxThinker(nn.Module):
                 f"{len(deepstack_visual_embeds)} deepstack layers exceed the "
                 f"{self.num_layers} decoder layers"
             )
-        return self._forward(
+        else:
+            pass
+        return self.forward(
             embeddings,
             positions=mrope_positions,
             cache=self.make_cache() if cache is None else cache,
@@ -461,22 +515,26 @@ class Qwen3OmniMlxThinker(nn.Module):
         input_ids: mx.array,
         *,
         mrope_positions: mx.array,
-        cache: list[Any],
+        cache: list[KVCache],
         capture_layers: tuple[int, ...] = (),
     ) -> MlxThinkerStep:
         """Run one autoregressive step against an existing KV cache."""
 
         if input_ids.ndim == 1:
             input_ids = input_ids[None, :]
+        else:
+            pass
         if len(cache) != self.num_layers:
             raise ValueError(
                 f"cache holds {len(cache)} entries but the model has "
                 f"{self.num_layers} layers"
             )
+        else:
+            pass
         embeddings = self.model.embed_tokens(input_ids)
-        self._validate_inputs(embeddings, mrope_positions)
-        layers = self._validate_capture_layers(capture_layers)
-        return self._forward(
+        self.validate_inputs(embeddings, mrope_positions)
+        layers = self.validate_capture_layers(capture_layers)
+        return self.forward(
             embeddings,
             positions=mrope_positions,
             cache=cache,

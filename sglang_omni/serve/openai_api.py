@@ -1273,19 +1273,17 @@ def rollout_sampling_to_client(params: RolloutSamplingParams) -> SamplingParams:
     return SamplingParams(**kwargs)
 
 
-<<<<<<< HEAD
-def _effective_rollout_return_logprob(req: RolloutGenerateRequest) -> bool:
+def effective_rollout_return_logprob(req: RolloutGenerateRequest) -> bool:
     from sglang_omni.platforms import current_platform
 
     if current_platform.is_mps() and "return_logprob" not in req.model_fields_set:
         return False
+    else:
+        pass
     return req.return_logprob
 
 
-def _build_rollout_generate_request(req: RolloutGenerateRequest) -> GenerateRequest:
-=======
 def build_rollout_generate_request(req: RolloutGenerateRequest) -> GenerateRequest:
->>>>>>> upstream/main
     """Convert a rollout GenerateRequest into a client GenerateRequest."""
     sampling = rollout_sampling_to_client(req.sampling_params)
 
@@ -1304,13 +1302,8 @@ def build_rollout_generate_request(req: RolloutGenerateRequest) -> GenerateReque
     else:
         pass
 
-<<<<<<< HEAD
-    extra_params: dict[str, Any] = {
-        "return_logprob": _effective_rollout_return_logprob(req),
-=======
     extra_params: dict[str, bool] = {
-        "return_logprob": req.return_logprob,
->>>>>>> upstream/main
+        "return_logprob": effective_rollout_return_logprob(req),
         "return_omni_rollout": req.return_omni_rollout,
         "return_routed_experts": req.return_routed_experts,
         "return_indexer_topk": req.return_indexer_topk,
@@ -1361,7 +1354,7 @@ def build_generate_response(
     result: CompletionResult,
     audio_format: str,
 ) -> GenerateResponse:
-    return_logprob = _effective_rollout_return_logprob(req)
+    return_logprob = effective_rollout_return_logprob(req)
     usage = result.usage
     completion_tokens = (
         usage.completion_tokens

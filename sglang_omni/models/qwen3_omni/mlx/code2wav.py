@@ -8,7 +8,6 @@ import math
 import re
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
 
 import mlx.core as mx
 import mlx.nn as nn
@@ -41,13 +40,19 @@ _TRANSPOSED_CONVOLUTION = re.compile(
 )
 
 
-def _activation(name: str, value: mx.array) -> mx.array:
+def activation(name: str, value: mx.array) -> mx.array:
     if name == "silu":
         return nn.silu(value)
+    else:
+        pass
     if name == "gelu":
         return nn.gelu(value)
+    else:
+        pass
     if name == "relu":
         return nn.relu(value)
+    else:
+        pass
     raise ValueError(f"unsupported code2wav activation {name!r}")
 
 
@@ -67,9 +72,13 @@ class CausalConv1d(nn.Module):
         super().__init__()
         if kernel_size <= 0 or dilation <= 0 or stride <= 0:
             raise ValueError("kernel_size, dilation, and stride must be positive")
+        else:
+            pass
         effective_kernel = (kernel_size - 1) * dilation + 1
         if effective_kernel < stride:
             raise ValueError("effective kernel size must be at least the stride")
+        else:
+            pass
         self.stride = stride
         self.kernel_size = effective_kernel
         self.left_padding = effective_kernel - stride
@@ -82,7 +91,7 @@ class CausalConv1d(nn.Module):
             groups=groups,
         )
 
-    def _extra_right_padding(self, length: int) -> int:
+    def extra_right_padding(self, length: int) -> int:
         frames = (length - self.kernel_size + self.left_padding) / self.stride + 1
         ideal_length = (
             (math.ceil(frames) - 1) * self.stride + self.kernel_size - self.left_padding
@@ -94,9 +103,13 @@ class CausalConv1d(nn.Module):
             raise ValueError(
                 f"causal Conv1D expects [batch, channels, time], got {x.shape}"
             )
+        else:
+            pass
         if x.shape[-1] <= 0:
             raise ValueError("causal Conv1D requires at least one time step")
-        extra = self._extra_right_padding(x.shape[-1])
+        else:
+            pass
+        extra = self.extra_right_padding(x.shape[-1])
         x = x.transpose(0, 2, 1)
         x = mx.pad(x, [(0, 0), (self.left_padding, extra), (0, 0)])
         return self.conv(x).transpose(0, 2, 1)
@@ -115,8 +128,12 @@ class CausalConvTranspose1d(nn.Module):
         super().__init__()
         if kernel_size <= 0 or stride <= 0:
             raise ValueError("kernel_size and stride must be positive")
+        else:
+            pass
         if kernel_size < stride:
             raise ValueError("kernel_size must be at least the stride")
+        else:
+            pass
         self.conv = nn.ConvTranspose1d(
             in_channels,
             out_channels,
@@ -130,11 +147,17 @@ class CausalConvTranspose1d(nn.Module):
             raise ValueError(
                 f"causal transposed Conv1D expects [batch, channels, time], got {x.shape}"
             )
+        else:
+            pass
         if x.shape[-1] <= 0:
             raise ValueError("causal transposed Conv1D requires at least one time step")
+        else:
+            pass
         x = self.conv(x.transpose(0, 2, 1))
         if self.right_trim:
             x = x[:, : -self.right_trim, :]
+        else:
+            pass
         return x.transpose(0, 2, 1)
 
 
@@ -163,11 +186,15 @@ class Code2WavAttention(nn.Module):
             raise ValueError(
                 "code2wav hidden_size must be divisible by num_attention_heads"
             )
+        else:
+            pass
         if config.num_attention_heads % config.num_key_value_heads:
             raise ValueError(
                 "code2wav num_attention_heads must be divisible by "
                 "num_key_value_heads"
             )
+        else:
+            pass
         self.num_heads = config.num_attention_heads
         self.num_kv_heads = config.num_key_value_heads
         self.head_dim = config.hidden_size // config.num_attention_heads
@@ -198,7 +225,9 @@ class Code2WavAttention(nn.Module):
             bias=config.attention_bias,
         )
 
-    def __call__(self, hidden_states: mx.array, *, mask: Any) -> mx.array:
+    def __call__(
+        self, hidden_states: mx.array, *, mask: mx.array | str | None
+    ) -> mx.array:
         batch, length, _ = hidden_states.shape
         queries = (
             self.q_proj(hidden_states)
@@ -251,7 +280,7 @@ class Code2WavMlp(nn.Module):
 
     def __call__(self, hidden_states: mx.array) -> mx.array:
         return self.down_proj(
-            _activation(self.hidden_act, self.gate_proj(hidden_states))
+            activation(self.hidden_act, self.gate_proj(hidden_states))
             * self.up_proj(hidden_states)
         )
 
@@ -287,7 +316,9 @@ class Code2WavTransformerLayer(nn.Module):
             config.layer_scale_initial_scale,
         )
 
-    def __call__(self, hidden_states: mx.array, *, mask: Any) -> mx.array:
+    def __call__(
+        self, hidden_states: mx.array, *, mask: mx.array | str | None
+    ) -> mx.array:
         hidden_states = hidden_states + self.self_attn_layer_scale(
             self.self_attn(self.input_layernorm(hidden_states), mask=mask)
         )
@@ -412,19 +443,25 @@ class Qwen3OmniMlxCode2Wav(nn.Module):
         )
         self.decoder = decoder
 
-    def _validate_codes(self, codes: mx.array) -> None:
+    def validate_codes(self, codes: mx.array) -> None:
         if codes.ndim != 3:
             raise ValueError(
                 "code2wav codes must have shape [batch, quantizers, frames], "
                 f"got {codes.shape}"
             )
+        else:
+            pass
         if codes.shape[1] != self.config.num_quantizers:
             raise ValueError(
                 f"Expected {self.config.num_quantizers} quantizers, "
                 f"got {codes.shape[1]}"
             )
+        else:
+            pass
         if codes.shape[0] <= 0 or codes.shape[2] <= 0:
             raise ValueError("code2wav codes require a non-empty batch and frame axis")
+        else:
+            pass
         minimum = int(mx.min(codes).item())
         maximum = int(mx.max(codes).item())
         if minimum < 0 or maximum >= self.config.codebook_size:
@@ -432,9 +469,11 @@ class Qwen3OmniMlxCode2Wav(nn.Module):
                 f"code2wav codes [{minimum}, {maximum}] are outside "
                 f"[0, {self.config.codebook_size})"
             )
+        else:
+            pass
 
     def embed_codes(self, codes: mx.array) -> mx.array:
-        self._validate_codes(codes)
+        self.validate_codes(codes)
         codes = codes.astype(mx.int32)
         offsets = mx.array(self.code_offset, dtype=mx.int32)[None, :, None]
         return self.code_embedding(codes + offsets).mean(axis=1)
@@ -465,8 +504,12 @@ def sanitize_code2wav_weights(
             if key.startswith(prefix):
                 key = key[len(prefix) :]
                 break
+            else:
+                pass
         if key.endswith(_DROPPED_SUFFIXES):
             continue
+        else:
+            pass
 
         if key.endswith(".conv.weight"):
             expected_shape = expected_shapes.get(key)
@@ -475,6 +518,8 @@ def sanitize_code2wav_weights(
                 raise ValueError(
                     f"Qwen3-Omni code2wav model has no target shape for {key!r}"
                 )
+            else:
+                pass
             if source_shape != expected_shape:
                 candidate = None
                 if value.ndim == 3:
@@ -482,19 +527,29 @@ def sanitize_code2wav_weights(
                         candidate = value.transpose(1, 2, 0)
                     else:
                         candidate = value.transpose(0, 2, 1)
+                else:
+                    pass
                 if candidate is None or tuple(candidate.shape) != expected_shape:
                     raise ValueError(
                         f"Qwen3-Omni code2wav tensor {source_key!r} has shape "
                         f"{source_shape}; expected MLX shape {expected_shape} "
                         "or the corresponding Torch Conv1D layout"
                     )
+                else:
+                    pass
                 value = candidate
+            else:
+                pass
+        else:
+            pass
 
         if key in sanitized:
             raise ValueError(
                 f"Qwen3-Omni code2wav weights {source_key!r} and another source "
                 f"both map to {key!r}"
             )
+        else:
+            pass
         sanitized[key] = value
     return sanitized
 
@@ -529,6 +584,8 @@ def load_qwen3_omni_mlx_code2wav(model_path: str) -> Qwen3OmniMlxCode2Wav:
             for key, value in weights.items()
             if key.startswith(_CODE2WAV_PREFIXES)
         }
+    else:
+        pass
     return load_qwen3_omni_mlx_component(
         model,
         weights,
