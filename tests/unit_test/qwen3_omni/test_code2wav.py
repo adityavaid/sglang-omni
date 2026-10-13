@@ -244,7 +244,6 @@ def test_qwen_code2wav_factory_default_does_not_build_cuda_graphs(
         )
 
     assert scheduler.cuda_graph_runner is None
-    assert "Qwen3-Omni code2wav scheduler backend=torch" in caplog.messages
 
 
 def test_qwen_code2wav_factory_skips_torch_ownership_log_on_constructor_failure(
@@ -1002,8 +1001,7 @@ def test_qwen_code2wav_replay_error_reaches_base_abort_without_eager_retry() -> 
     assert "req-1" not in scheduler.stream_states
 
 
-def test_mlx_code2wav_preserves_streaming_context_trim_and_final_flush() -> None:
-    mx = pytest.importorskip("mlx.core")
+def test_cpu_vocoder_adapter_preserves_streaming_context_trim_and_final_flush() -> None:
 
     class _RecordingMlxCode2Wav:
         total_upsample = 2
@@ -1013,19 +1011,17 @@ def test_mlx_code2wav_preserves_streaming_context_trim_and_final_flush() -> None
 
         def __call__(self, codes):
             self.calls.append(np.asarray(codes))
-            return mx.repeat(codes[:, :1, :].astype(mx.float32), 2, axis=-1)
+            return codes[:, :1, :].float().repeat_interleave(2, dim=-1)
 
     model = _RecordingMlxCode2Wav()
     scheduler = Code2WavScheduler(
         model,
         device="cpu",
-        backend="mlx",
         stream_chunk_size=10,
         left_context_size=25,
         sample_rate=24000,
-        enable_output_overlap=True,
-        enable_cuda_graph=True,
-        cuda_graph_runner=object(),
+        enable_output_overlap=False,
+        enable_cuda_graph=False,
     )
     scheduler.stream_payloads["req-1"] = make_qwen_payload(request_id="req-1")
     for chunk_id in range(43):
@@ -1060,8 +1056,7 @@ def test_mlx_code2wav_preserves_streaming_context_trim_and_final_flush() -> None
     assert scheduler.cuda_graph_runner is None
 
 
-def test_mlx_code2wav_abort_clears_state_without_decode() -> None:
-    mx = pytest.importorskip("mlx.core")
+def test_cpu_vocoder_adapter_abort_clears_state_without_decode() -> None:
 
     class _UnusedMlxCode2Wav:
         total_upsample = 2
@@ -1069,10 +1064,10 @@ def test_mlx_code2wav_abort_clears_state_without_decode() -> None:
 
         def __call__(self, codes):
             self.calls += 1
-            return mx.zeros((codes.shape[0], 1, codes.shape[-1] * 2))
+            return torch.zeros((codes.shape[0], 1, codes.shape[-1] * 2))
 
     model = _UnusedMlxCode2Wav()
-    scheduler = Code2WavScheduler(model, device="cpu", backend="mlx")
+    scheduler = Code2WavScheduler(model, device="cpu")
     scheduler.stream_payloads["req-1"] = make_qwen_payload(request_id="req-1")
     scheduler.get_or_create_stream_state("req-1")
 

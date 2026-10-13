@@ -134,24 +134,6 @@ class QwenTalkerScheduler(OmniScheduler[SGLangARRequestData]):
         del request_id, chunk
         return self.enable_partial_start
 
-    def bind_model_runner(self, model_runner) -> None:
-        """Bind the runner and adopt its abort cleanup when it owns state.
-
-        The talker runner is built *after* the scheduler (it needs the
-        scheduler-owned outbox), so an abort callback cannot be passed through
-        ``__init__``. A runner that owns per-request backend state -- the
-        native MLX talker owns one KV cache, one suppression mask, and one
-        in-flight step per request -- exposes ``abort_request`` and gets it
-        wired here. An explicitly supplied callback still wins.
-        """
-
-        super().bind_model_runner(model_runner)
-        abort_request = getattr(model_runner, "abort_request", None)
-        if abort_request is not None and self.abort_callback is None:
-            self.abort_callback = abort_request
-        else:
-            pass
-
     def is_batch_ready_to_run(self, batch: ScheduleBatch | None) -> bool:
         if (
             batch is not None

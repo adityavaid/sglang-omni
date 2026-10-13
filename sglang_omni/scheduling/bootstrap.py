@@ -72,17 +72,9 @@ def init_sglang_cuda_graphs(
     """Initialize SGLang graphs with Omni's prefill-embedding capture view."""
     from sglang.srt.hardware_backend.mlx.runtime import use_mlx
 
-    from sglang_omni.model_runner.external_model_worker import uses_external_forward
-
     if use_mlx():
         # Note (yexiaodong): The MLX stub has no Torch graph lifecycle because
         # native MLX lazy evaluation owns graph execution.
-        return
-    else:
-        pass
-    if uses_external_forward(model_worker):
-        # The stage's own runner owns every forward, so this worker holds no
-        # Torch model and no attention backend to capture a graph around.
         return
     else:
         pass
@@ -122,7 +114,6 @@ def create_sglang_infrastructure(
     ) = None,
     mlx_model_path: str | None = None,
     mlx_model_revision: str | None = None,
-    capture_hidden_layers: tuple[int, ...] | None = None,
 ):
     """Create SGLang worker, memory pools, and tree cache.
 
@@ -160,22 +151,12 @@ def create_sglang_infrastructure(
         total_gpu_memory_fraction=total_gpu_memory_fraction,
         kv_cache_bytes=kv_cache_bytes,
         enable_prefill_input_embeds=enable_prefill_input_embeds,
-        capture_hidden_layers=(
-            tuple(int(layer) for layer in capture_hidden_layers)
-            if capture_hidden_layers
-            else None
-        ),
         mlx_model_path=mlx_model_path,
         mlx_model_revision=mlx_model_revision,
     )
     from sglang.srt.hardware_backend.mlx.runtime import use_mlx
 
-    from sglang_omni.model_runner.external_model_worker import (
-        EXTERNAL_FORWARD_ARCHITECTURES,
-    )
-    from sglang_omni.models.qwen3_omni.apple_runtime import (
-        qwen3_omni_uses_apple_backend,
-    )
+    from sglang_omni.platforms import current_platform
 
     if use_mlx():
         # Note (Jiaxin Deng): the MLX worker sizes no SGLang KV pool, so a
@@ -197,8 +178,8 @@ def create_sglang_infrastructure(
             tp_rank=tp_rank,
         )
     elif (
-        model_arch_override in EXTERNAL_FORWARD_ARCHITECTURES
-        and qwen3_omni_uses_apple_backend()
+        model_arch_override in ("Qwen3OmniThinkerForCausalLM", "Qwen3OmniTalker")
+        and current_platform.is_mps()
     ):
         raise ValueError("Qwen3-Omni on Apple Silicon requires SGLANG_USE_MLX=1")
     else:

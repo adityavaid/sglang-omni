@@ -24,27 +24,6 @@ _REPO_ROOT = EXAMPLES_DIR.parent
 _APPLE_DOCS = (_REPO_ROOT / "docs" / "basic_usage" / "qwen3_omni.md",)
 
 
-@pytest.fixture(autouse=True)
-def isolate_qwen_apple_runtime(monkeypatch):
-    from sglang_omni.models.qwen3_omni import apple_runtime
-
-    monkeypatch.setattr(apple_runtime, "qwen3_omni_uses_mlx_backend", lambda: False)
-    monkeypatch.setattr(
-        apple_runtime,
-        "validate_qwen3_omni_apple_checkpoint",
-        lambda *args, **kwargs: None,
-    )
-
-
-def test_apple_launcher_defaults_to_mlx_and_rejects_mps():
-    from examples.launchers.qwen3_omni import _build_qwen_apple_server_parser
-
-    parser = _build_qwen_apple_server_parser()
-    assert parser.parse_args(["--model-path", "checkpoint"]).backend == "mlx"
-    with pytest.raises(SystemExit):
-        parser.parse_args(["--model-path", "checkpoint", "--backend", "mps"])
-
-
 @pytest.mark.parametrize(
     "preset",
     [
@@ -547,18 +526,12 @@ def test_gpu_thinker_tp_rejected_when_tp1(mock_launch_server):
 
 @pytest.fixture
 def apple_checkpoint(monkeypatch, tmp_path):
-    from sglang_omni.models.qwen3_omni import apple_runtime
     from sglang_omni.models.qwen3_omni import config as qwen_config
 
     monkeypatch.setattr(qwen_config.current_platform, "is_mps", lambda: True)
     monkeypatch.setattr(qwen_config.current_platform, "device_type", "mps")
     monkeypatch.setattr(
         qwen_config.current_platform, "enable_code2wav_graph", lambda: False
-    )
-    monkeypatch.setattr(
-        apple_runtime,
-        "qwen3_omni_uses_mlx_backend",
-        lambda: os.environ.get("SGLANG_USE_MLX") == "1",
     )
     checkpoint = tmp_path / "checkpoint"
     checkpoint.mkdir()
@@ -605,21 +578,12 @@ def test_apple_cli_uses_backend_policy_and_forwards_server_arguments(
     monkeypatch, apple_checkpoint, use_mlx, text_only, tmp_path
 ) -> None:
     from sglang_omni.cli.serve import serve
-    from sglang_omni.models.qwen3_omni import apple_runtime
     from sglang_omni.models.qwen3_omni.config import (
         Qwen3OmniPipelineConfig,
         Qwen3OmniSpeechPipelineConfig,
     )
 
     monkeypatch.setenv("SGLANG_USE_MLX", "1" if use_mlx else "0")
-    validated = []
-    monkeypatch.setattr(
-        apple_runtime,
-        "validate_qwen3_omni_apple_checkpoint",
-        lambda path, *, speech_enabled, use_mlx: validated.append(
-            (path, speech_enabled, use_mlx)
-        ),
-    )
     monkeypatch.setattr(
         "sglang_omni.cli.serve.ConfigManager.from_file",
         lambda *args: pytest.fail("Apple launch must not need a legacy YAML preset"),
@@ -647,8 +611,6 @@ def test_apple_cli_uses_backend_policy_and_forwards_server_arguments(
     config_cls = Qwen3OmniPipelineConfig if text_only else Qwen3OmniSpeechPipelineConfig
     assert isinstance(config, config_cls)
     assert config.model_path == str(apple_checkpoint)
-    assert validated
-    assert set(validated) == {(str(apple_checkpoint), not text_only, use_mlx)}
     stage_names = {stage.name for stage in config.stages}
     assert ("talker_ar" in stage_names) is not text_only
     assert ("code2wav" in stage_names) is not text_only
@@ -663,34 +625,8 @@ def test_apple_cli_uses_backend_policy_and_forwards_server_arguments(
         "allowed_local_media_path": str(media_path),
         "allowed_media_domains": ["assets.example.com"],
         "tts_batch_max_items": 32,
+        "skip_server_warmup": False,
     }
-
-
-@pytest.mark.parametrize("use_mlx", [True])
-def test_apple_cli_checkpoint_failure_does_not_fallback(
-    monkeypatch, apple_checkpoint, use_mlx
-) -> None:
-    from sglang_omni.cli.serve import serve
-    from sglang_omni.models.qwen3_omni import apple_runtime
-
-    monkeypatch.setenv("SGLANG_USE_MLX", "1" if use_mlx else "0")
-    validated = []
-
-    def fail_validation(path, *, speech_enabled, use_mlx):
-        validated.append((path, speech_enabled, use_mlx))
-        raise RuntimeError("checkpoint validation failed")
-
-    monkeypatch.setattr(
-        apple_runtime, "validate_qwen3_omni_apple_checkpoint", fail_validation
-    )
-    launched = MagicMock()
-    monkeypatch.setattr("sglang_omni.cli.serve.launch_server", launched)
-
-    with pytest.raises(RuntimeError, match="checkpoint validation failed"):
-        serve(ctx=SimpleNamespace(args=[]), model_path=str(apple_checkpoint))
-
-    assert validated == [(str(apple_checkpoint), True, use_mlx)]
-    launched.assert_not_called()
 
 
 @pytest.mark.parametrize("use_mlx", [True])

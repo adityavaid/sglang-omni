@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from pathlib import Path
+import base64
 from typing import Any, ClassVar
 
 from pydantic import Field
@@ -214,6 +214,8 @@ def talker_stage(
     process: str,
     enable_partial_start: bool,
 ) -> StageConfig:
+    from sglang.srt.hardware_backend.mlx.runtime import use_mlx
+
     return EngineStageConfig(
         name="talker_ar",
         process=process,
@@ -227,8 +229,8 @@ def talker_stage(
             partial_start_min_chunks=5,
             # Note (wenyao): Match the default serial Code2Wav window so later
             # 10-row messages keep the captured 10/20/30/35-frame graph shapes.
-            codec_coalesce_frames=10,
-            codec_coalesce_early_frames=10,
+            codec_coalesce_frames=0 if use_mlx() else 10,
+            codec_coalesce_early_frames=0 if use_mlx() else 10,
             codec_coalesce_first_frames=0,
         ),
         gpu=gpu,
@@ -380,25 +382,6 @@ class Qwen3OmniBasePipelineConfig(PipelineConfig):
         default_factory=lambda: dict(_DEEPGEMM_PRECOMPILE_ENV_DEFAULTS)
     )
 
-    def model_post_init(self, __context: object = None) -> None:
-        super().model_post_init(__context)
-        from sglang_omni.models.qwen3_omni import apple_runtime
-
-        if not current_platform.is_mps():
-            return
-        else:
-            pass
-        if not (Path(self.model_path).exists() or "/" in self.model_path):
-            return
-        else:
-            pass
-
-        apple_runtime.validate_qwen3_omni_apple_checkpoint(
-            self.model_path,
-            speech_enabled=any(stage.name == "talker_ar" for stage in self.stages),
-            use_mlx=apple_runtime.qwen3_omni_uses_mlx_backend(),
-        )
-
     def resolved_stage_env_defaults(self, stage_name: str) -> dict[str, str]:
         """Keep CPU-sensitive preprocessing parallel unless OMP is configured."""
         env_defaults = super().resolved_stage_env_defaults(stage_name)
@@ -445,12 +428,14 @@ def default_speech_stages() -> list[StageConfig]:
     # the same logical GPU 0 so the unchanged 7-stage speech graph is
     # constructible on real Apple hardware. Every other platform keeps its
     # original two-GPU placement.
+    from sglang.srt.hardware_backend.mlx.runtime import use_mlx
+
     talker_gpu = 0 if current_platform.is_mps() else 1
     return speech_stages(
         thinker_gpu=0,
         talker_gpu=talker_gpu,
         process_by_stage=SPEECH_DEFAULT_PROCESSES,
-        enable_partial_start=True,
+        enable_partial_start=not use_mlx(),
     )
 
 

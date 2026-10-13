@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import pytest
 import torch
 import torch.nn as nn
 from transformers.models.qwen3_omni_moe import modeling_qwen3_omni_moe as hf_modeling
@@ -155,51 +154,3 @@ def test_shared_splits_do_not_copy_from_device_per_layer() -> None:
     finally:
         torch.Tensor.tolist = original
     assert calls["n"] == 0
-
-
-def test_mlx_segments_use_each_samples_chunks_and_inference_windows() -> None:
-    mx = pytest.importorskip("mlx.core")
-    from sglang_omni.models.qwen3_omni.mlx.audio import (
-        qwen3_omni_audio_attention_segments,
-    )
-
-    segments = qwen3_omni_audio_attention_segments(
-        mx.array([37, 1200], dtype=mx.int32),
-        n_window=50,
-        n_window_infer=800,
-    )
-
-    assert segments == (5, 104, 52)
-
-
-def test_mlx_chunk_padding_preserves_sample_boundaries() -> None:
-    mx = pytest.importorskip("mlx.core")
-    from sglang_omni.models.qwen3_omni.mlx.audio import Qwen3OmniMlxAudioEncoder
-    from sglang_omni.models.qwen3_omni.mlx.config import AudioConfig
-
-    encoder = Qwen3OmniMlxAudioEncoder(
-        AudioConfig(
-            d_model=8,
-            encoder_attention_heads=2,
-            encoder_layers=0,
-            encoder_ffn_dim=16,
-            num_mel_bins=2,
-            downsample_hidden_size=2,
-            max_source_positions=16,
-            output_dim=8,
-            activation_function="gelu",
-            scale_embedding=False,
-            n_window=2,
-            n_window_infer=8,
-            conv_chunksize=4,
-        )
-    )
-    features = mx.arange(16).reshape(2, 8)
-    padded, lengths = encoder.chunk_and_pad(features, mx.array([5, 3]))
-
-    assert lengths == (4, 1, 3)
-    assert padded.tolist() == [
-        [[0, 1, 2, 3], [8, 9, 10, 11]],
-        [[4, 0, 0, 0], [12, 0, 0, 0]],
-        [[5, 6, 7, 0], [13, 14, 15, 0]],
-    ]

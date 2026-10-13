@@ -3,33 +3,16 @@
 
 from __future__ import annotations
 
-import json
 import math
 from collections.abc import Mapping
-from pathlib import Path
-from typing import Any
 
 import mlx.core as mx
 import mlx.nn as nn
 import numpy as np
-import torch
-from mlx.utils import tree_flatten
-
-from sglang_omni.models.qwen3_omni.mlx.common import load_qwen3_omni_mlx_component
-from sglang_omni.models.qwen3_omni.mlx.config import Qwen3OmniMlxConfig, VisionConfig
-from sglang_omni.models.qwen3_omni.mlx.runner import read_qwen3_omni_component_weights
-from sglang_omni.models.qwen3_omni.mlx.tensor_utils import mlx_to_torch as mlx_to_torch
-from sglang_omni.models.qwen3_omni.mlx.tensor_utils import torch_to_mlx as torch_to_mlx
-
-_VISION_PREFIXES = ("thinker.visual.", "thinker.vision_tower.")
-_VISION_LOCAL_PREFIXES = (
-    "patch_embed.",
-    "pos_embed.",
-    "blocks.",
-    "merger.",
-    "merger_list.",
-    "deepstack_merger_list.",
+from transformers.models.qwen3_omni_moe.configuration_qwen3_omni_moe import (
+    Qwen3OmniMoeVisionEncoderConfig as VisionConfig,
 )
+
 # MLX SDPA can materialize its score matrix, so cap each Metal temporary at 1 GiB.
 _VISION_ATTENTION_SCORE_BUDGET_BYTES = 1 << 30
 _VISION_ATTENTION_SCORE_BYTES_PER_ELEMENT = 4
@@ -40,29 +23,11 @@ def sanitize_vision_weights(
     *,
     expected_shapes: Mapping[str, tuple[int, ...]],
 ) -> dict[str, mx.array]:
-    """Map official and converted vision weights onto the native MLX model."""
+    """Validate component-local tensors and adapt Torch convolution layouts."""
 
     sanitized: dict[str, mx.array] = {}
     for source_key, value in weights.items():
         key = source_key
-        for prefix in _VISION_PREFIXES:
-            if key.startswith(prefix):
-                key = key[len(prefix) :]
-                break
-            else:
-                pass
-
-        if key.startswith("merger_list."):
-            key = f"deepstack_merger_list.{key[len('merger_list.') :]}"
-        else:
-            pass
-        if key.startswith(("merger.", "deepstack_merger_list.")):
-            key = key.replace(".ln_q.", ".norm.")
-            key = key.replace(".mlp.0.", ".linear_fc1.")
-            key = key.replace(".mlp.2.", ".linear_fc2.")
-        else:
-            pass
-
         if key == "patch_embed.proj.weight":
             expected_shape = expected_shapes.get(key)
             source_shape = tuple(value.shape)
@@ -350,7 +315,6 @@ class Qwen3OmniMlxVisionEncoder(nn.Module):
     def interpolate_position_embeddings(self, grid_thw: mx.array) -> mx.array:
         grid = self.validated_grid(grid_thw)
         outputs: list[mx.array] = []
-        table_dtype = self.pos_embed.weight.dtype
         side = self.num_grid_per_side
         merge = self.spatial_merge_size
 
@@ -382,7 +346,7 @@ class Qwen3OmniMlxVisionEncoder(nn.Module):
             )
             corners = self.pos_embed(mx.array(indices, dtype=mx.int32))
             spatial = mx.sum(
-                corners * mx.array(weights, dtype=table_dtype)[:, :, None], axis=0
+                corners * mx.array(weights, dtype=corners.dtype)[:, :, None], axis=0
             )
             spatial = spatial.reshape(
                 height // merge,
@@ -462,99 +426,3 @@ class Qwen3OmniMlxVisionEncoder(nn.Module):
 
         primary = self.merger(hidden)
         return primary, deepstack
-
-
-def load_qwen3_omni_mlx_vision(model_path: str) -> Qwen3OmniMlxVisionEncoder:
-    """Load the vision component from an official or converted checkpoint."""
-
-    from sglang.srt.hardware_backend.mlx.remote_code_gate import (
-        ensure_remote_code_allowed,
-        resolve_model_directory,
-    )
-
-    directory = Path(resolve_model_directory(model_path))
-    ensure_remote_code_allowed(directory, False)
-    raw = json.loads((directory / "config.json").read_text(encoding="utf-8"))
-    root_config = Qwen3OmniMlxConfig.from_dict(raw)
-    model = Qwen3OmniMlxVisionEncoder(root_config.vision)
-    expected_shapes = {
-        key: tuple(value.shape) for key, value in tree_flatten(model.parameters())
-    }
-    weights = read_qwen3_omni_component_weights(
-        directory,
-        component="vision",
-        official_prefixes=_VISION_PREFIXES,
-        local_prefixes=_VISION_LOCAL_PREFIXES,
-    )
-    return load_qwen3_omni_mlx_component(
-        model,
-        weights,
-        sanitizer=lambda raw_weights: sanitize_vision_weights(
-            raw_weights,
-            expected_shapes=expected_shapes,
-        ),
-        quantization=root_config.quantization,
-    )
-
-
-class Qwen3OmniMlxImageEncoder:
-    """Torch-compatible stage adapter around the native MLX vision encoder."""
-
-    def __init__(self, model_path: str) -> None:
-        self.visual = load_qwen3_omni_mlx_vision(model_path)
-        self.spatial_merge_size = self.visual.config.spatial_merge_size
-        self.out_hidden_size = self.visual.config.out_hidden_size
-        self.deepstack_layers = len(self.visual.config.deepstack_visual_indexes)
-        self.visual_dtype_bytes = int(self.visual.patch_embed.proj.weight.dtype.size)
-
-    def encode(
-        self, pixel_values: torch.Tensor, grid_thw: torch.Tensor
-    ) -> tuple[torch.Tensor, list[torch.Tensor]]:
-        primary, deepstack = self.visual(
-            torch_to_mlx(pixel_values),
-            torch_to_mlx(grid_thw),
-        )
-        mx.eval(primary, deepstack)
-        return mlx_to_torch(primary), [mlx_to_torch(layer) for layer in deepstack]
-
-    def __call__(self, **inputs: torch.Tensor | None) -> dict[str, Any]:
-        outputs: dict[str, Any] = {}
-        merge = self.spatial_merge_size**2
-
-        pixel_values = inputs.get("pixel_values")
-        image_grid_thw = inputs.get("image_grid_thw")
-        if isinstance(pixel_values, torch.Tensor) and isinstance(
-            image_grid_thw, torch.Tensor
-        ):
-            image_grid_thw = image_grid_thw.detach().cpu().to(dtype=torch.long)
-            image_embeds, deepstack = self.encode(pixel_values, image_grid_thw)
-            outputs.update(
-                {
-                    "image_embeds": image_embeds,
-                    "image_grid_thw": image_grid_thw,
-                    "image_token_counts": image_grid_thw.prod(-1) // merge,
-                    "deepstack_visual_embeds_image": deepstack,
-                }
-            )
-        else:
-            pass
-
-        pixel_values_videos = inputs.get("pixel_values_videos")
-        video_grid_thw = inputs.get("video_grid_thw")
-        if isinstance(pixel_values_videos, torch.Tensor) and isinstance(
-            video_grid_thw, torch.Tensor
-        ):
-            video_grid_thw = video_grid_thw.detach().cpu().to(dtype=torch.long)
-            video_embeds, deepstack = self.encode(pixel_values_videos, video_grid_thw)
-            outputs.update(
-                {
-                    "video_embeds": video_embeds,
-                    "video_grid_thw": video_grid_thw,
-                    "video_token_counts": video_grid_thw.prod(-1) // merge,
-                    "deepstack_visual_embeds_video": deepstack,
-                }
-            )
-        else:
-            pass
-
-        return outputs

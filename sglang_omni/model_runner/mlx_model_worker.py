@@ -254,7 +254,7 @@ class MlxSchedulerModelRunner(ModelRunner):
             self.resolve_skip_rids = set()
 
 
-def create_qwen3_asr_mlx_worker(
+def create_mlx_model_worker(
     *,
     config: ModelWorkerConfig,
     server_args: ServerArgs,
@@ -269,6 +269,18 @@ def create_qwen3_asr_mlx_worker(
         )
 
         make_runner_class = make_qwen3_asr_mlx_runner_class
+    elif model_arch == "Qwen3OmniThinkerForCausalLM":
+        from sglang_omni.models.qwen3_omni.mlx.runner import (
+            make_qwen3_omni_thinker_mlx_runner_class,
+        )
+
+        make_runner_class = make_qwen3_omni_thinker_mlx_runner_class
+    elif model_arch == "Qwen3OmniTalker":
+        from sglang_omni.models.qwen3_omni.mlx.runner import (
+            make_qwen3_omni_talker_mlx_runner_class,
+        )
+
+        make_runner_class = make_qwen3_omni_talker_mlx_runner_class
     elif model_arch == "ArkasrForConditionalGeneration":
         from sglang_omni.models.arkasr.mlx.runner import make_arkasr_mlx_runner_class
 
@@ -312,6 +324,10 @@ def create_qwen3_asr_mlx_worker(
                 # Note (yexiaodong): The bookkeeping stub must use CosyVoice's
                 # 6,761-codec-token vocabulary rather than Qwen2 text tokens.
                 self.model_config.vocab_size = 6561 + 200
+            elif model_arch == "Qwen3OmniTalker":
+                self.model_config.vocab_size = (
+                    self.model_config.hf_config.talker_config.text_config.vocab_size
+                )
             else:
                 pass
             runner_class = make_runner_class()
@@ -364,13 +380,13 @@ def create_qwen3_asr_mlx_worker(
             self._mlx_pool_initialized = False  # noqa: leading-underscore
 
         def get_tp_group(self):
-            return self.model_runner.tp_group
+            return get_parallel().tp_group
 
         def get_attention_tp_group(self):
-            return self.model_runner.attention_tp_group
+            return get_parallel().attn_tp_group
 
         def get_attention_tp_cpu_group(self):
-            return self.model_runner.attention_tp_group.cpu_group
+            return get_parallel().attn_tp_group.cpu_group
 
     publish(
         server_args,
@@ -395,66 +411,4 @@ def create_qwen3_asr_mlx_worker(
         server_args=server_args,
         gpu_id=gpu_id,
         nccl_port=nccl_port,
-    )
-
-
-def create_qwen3_omni_mlx_worker(
-    *,
-    config: ModelWorkerConfig,
-    server_args: ServerArgs,
-    gpu_id: int,
-    tp_rank: int = 0,
-):
-    """Deferred entry point for the Qwen3-Omni MLX worker.
-
-    The Omni runner module subclasses this module's ``MlxSchedulerModelRunner``,
-    so the import must stay one-directional at module-import time.
-    """
-    from sglang_omni.models.qwen3_omni.mlx.runner import create_qwen3_omni_mlx_worker
-
-    return create_qwen3_omni_mlx_worker(
-        config=config,
-        server_args=server_args,
-        gpu_id=gpu_id,
-        tp_rank=tp_rank,
-    )
-
-
-# Architecture -> MLX worker factory. Each stage owns its own native runner, so
-# dispatch is a table rather than a chain of architecture conditionals.
-MLX_WORKER_FACTORIES = {
-    "Qwen3ASRForConditionalGeneration": create_qwen3_asr_mlx_worker,
-    "ArkasrForConditionalGeneration": create_qwen3_asr_mlx_worker,
-    "FunCosyVoice3SGLangModel": create_qwen3_asr_mlx_worker,
-    "Qwen3OmniThinkerForCausalLM": create_qwen3_omni_mlx_worker,
-    "Qwen3OmniTalker": create_qwen3_omni_mlx_worker,
-}
-
-
-def create_mlx_model_worker(
-    *,
-    config: ModelWorkerConfig,
-    server_args: ServerArgs,
-    gpu_id: int,
-    tp_rank: int = 0,
-):
-    """Construct an MLX worker with the same scheduler-facing contract as Omni.
-
-    MLX was explicitly requested by the caller, so an unsupported architecture
-    or a failing MLX load is raised here and never silently retried on another
-    backend.
-    """
-    factory = MLX_WORKER_FACTORIES.get(config.model_arch_override)
-    if factory is None:
-        raise NotImplementedError(
-            "Omni's MLX worker supports "
-            f"{sorted(MLX_WORKER_FACTORIES)}; got {config.model_arch_override!r}"
-        )
-    else:
-        pass
-    return factory(
-        config=config,
-        server_args=server_args,
-        gpu_id=gpu_id,
-        tp_rank=tp_rank,
     )

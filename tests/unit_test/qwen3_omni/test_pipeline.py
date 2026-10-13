@@ -9,8 +9,8 @@ import logging
 import sys
 import threading
 from copy import deepcopy
-from types import ModuleType, SimpleNamespace
 from io import BytesIO
+from types import ModuleType, SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import numpy as np
@@ -129,14 +129,14 @@ def test_image_encoder_factory_selects_mlx_constructor(monkeypatch, caplog) -> N
             self.compute_fn = compute_fn
             self.kwargs = kwargs
 
-    vision_module = ModuleType("sglang_omni.models.qwen3_omni.mlx.vision")
-    vision_module.Qwen3OmniMlxImageEncoder = FakeMlxImageEncoder
+    vision_module = ModuleType("sglang_omni.models.qwen3_omni.mlx.encoders")
+    vision_module.MlxImageEncoder = FakeMlxImageEncoder
     monkeypatch.setitem(
         sys.modules,
-        "sglang_omni.models.qwen3_omni.mlx.vision",
+        "sglang_omni.models.qwen3_omni.mlx.encoders",
         vision_module,
     )
-    monkeypatch.setattr(qwen_stages, "qwen3_omni_uses_mlx_backend", lambda: True)
+    monkeypatch.setattr(qwen_stages, "use_mlx", lambda: True)
     monkeypatch.setattr(simple_scheduler, "SimpleScheduler", FakeScheduler)
     monkeypatch.setattr(
         device_utils,
@@ -154,8 +154,8 @@ def test_image_encoder_factory_selects_mlx_constructor(monkeypatch, caplog) -> N
             "checkpoint", device="mps", dtype="float16"
         )
     assert constructed == {"model_path": "checkpoint"}
-    assert scheduler.kwargs["max_batch_size"] == 32
-    assert "Qwen3-Omni image encoder backend=native_mlx" in caplog.messages
+    assert scheduler.kwargs["max_batch_size"] == 1
+    assert "Qwen3-Omni image encoder backend=mlx_native" in caplog.messages
 
 
 def test_audio_encoder_factory_selects_mlx_constructor(monkeypatch, caplog) -> None:
@@ -173,14 +173,14 @@ def test_audio_encoder_factory_selects_mlx_constructor(monkeypatch, caplog) -> N
             self.compute_fn = compute_fn
             self.kwargs = kwargs
 
-    audio_module = ModuleType("sglang_omni.models.qwen3_omni.mlx.audio")
-    audio_module.Qwen3OmniMlxAudioStageEncoder = FakeMlxAudioEncoder
+    audio_module = ModuleType("sglang_omni.models.qwen3_omni.mlx.encoders")
+    audio_module.MlxAudioEncoder = FakeMlxAudioEncoder
     monkeypatch.setitem(
         sys.modules,
-        "sglang_omni.models.qwen3_omni.mlx.audio",
+        "sglang_omni.models.qwen3_omni.mlx.encoders",
         audio_module,
     )
-    monkeypatch.setattr(qwen_stages, "qwen3_omni_uses_mlx_backend", lambda: True)
+    monkeypatch.setattr(qwen_stages, "use_mlx", lambda: True)
     monkeypatch.setattr(simple_scheduler, "SimpleScheduler", FakeScheduler)
     monkeypatch.setattr(
         device_utils,
@@ -202,8 +202,8 @@ def test_audio_encoder_factory_selects_mlx_constructor(monkeypatch, caplog) -> N
         )
 
     assert constructed == {"model_path": "checkpoint"}
-    assert scheduler.kwargs["max_batch_size"] == 32
-    assert "Qwen3-Omni audio encoder backend=native_mlx" in caplog.messages
+    assert scheduler.kwargs["max_batch_size"] == 1
+    assert "Qwen3-Omni audio encoder backend=mlx_native" in caplog.messages
 
 
 def test_image_encoder_factory_logs_constructed_torch_backend(
@@ -229,7 +229,7 @@ def test_image_encoder_factory_logs_constructed_torch_backend(
             self.compute_fn = compute_fn
             self.kwargs = kwargs
 
-    monkeypatch.setattr(qwen_stages, "qwen3_omni_uses_mlx_backend", lambda: False)
+    monkeypatch.setattr(qwen_stages, "use_mlx", lambda: False)
     monkeypatch.setattr(simple_scheduler, "SimpleScheduler", FakeScheduler)
     monkeypatch.setattr(
         device_utils, "resolve_device_spec", lambda device, index=None: device
@@ -282,7 +282,7 @@ def test_audio_encoder_factory_logs_constructed_torch_backend(
             self.compute_fn = compute_fn
             self.kwargs = kwargs
 
-    monkeypatch.setattr(qwen_stages, "qwen3_omni_uses_mlx_backend", lambda: False)
+    monkeypatch.setattr(qwen_stages, "use_mlx", lambda: False)
     monkeypatch.setattr(current_platform, "is_mps", lambda: False)
     monkeypatch.setattr(simple_scheduler, "SimpleScheduler", FakeScheduler)
     monkeypatch.setattr(

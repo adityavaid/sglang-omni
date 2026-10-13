@@ -6,10 +6,11 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Protocol, TypedDict, overload
+from typing import TYPE_CHECKING, TypedDict, overload
 
 import torch
 import xxhash
+from sglang.srt.hardware_backend.mlx.runtime import use_mlx
 from sglang.srt.tokenizer.tiktoken_tokenizer import TiktokenTokenizer
 from transformers import PreTrainedTokenizerBase
 
@@ -58,25 +59,6 @@ MM_AGGREGATE_STAGE = "mm_aggregate"
 MAX_INT32_POSITIVE = 0x7FFFFFFF
 
 
-class TalkerPrefillBuilderProtocol(Protocol):
-    def build_prompt_prefill(
-        self,
-        payload: StagePayload,
-        thinker_chunks: list[Any],
-        *,
-        thinker_done: bool,
-    ) -> dict[str, Any]:
-        raise NotImplementedError
-
-    def append_text_chunk(
-        self, req_data: SGLangARRequestData, chunk: StreamItem
-    ) -> None:
-        raise NotImplementedError
-
-    def mark_thinker_done(self, req_data: SGLangARRequestData) -> None:
-        raise NotImplementedError
-
-
 class OptionalTalkerSamplingConfig(TypedDict, total=False):
     seed: int | None
 
@@ -100,26 +82,6 @@ def resolve_seed(params: Mapping[str, object]) -> int | None:
         else:
             pass
     return None
-
-
-def qwen3_omni_uses_apple_backend() -> bool:
-    from sglang_omni.models.qwen3_omni.apple_runtime import (
-        qwen3_omni_uses_apple_backend,
-    )
-
-    return qwen3_omni_uses_apple_backend()
-
-
-def validate_qwen3_omni_apple_request(
-    params: dict[str, Any],
-    *,
-    stage_name: str,
-) -> None:
-    from sglang_omni.models.qwen3_omni.apple_runtime import (
-        validate_qwen3_omni_apple_request,
-    )
-
-    validate_qwen3_omni_apple_request(params, stage_name=stage_name)
 
 
 def encoder_row_count(
@@ -147,7 +109,7 @@ def validate_modality_placeholder_counts(
     input_ids: torch.Tensor,
     *,
     thinker_config: Qwen3OmniMoeThinkerConfig,
-    model_inputs: dict[str, Any],
+    model_inputs: dict[str, object],
     request_id: str,
 ) -> None:
     """Reject a request whose encoder rows cannot fill its placeholders.
@@ -165,7 +127,7 @@ def validate_modality_placeholder_counts(
     cache-key substitution rewrites the prompt.
     """
 
-    if not qwen3_omni_uses_apple_backend():
+    if not use_mlx():
         return
     else:
         pass
@@ -804,7 +766,6 @@ def build_sglang_thinker_request(
     Constructs a SGLang Req with normalized SamplingParams, then wraps it
     in SGLangARRequestData (which inherits ARRequestData).
     """
-    validate_qwen3_omni_apple_request(params, stage_name="thinker")
     from sglang.srt.managers.schedule_batch import MultimodalInputs, Req
     from sglang.srt.sampling.sampling_params import SamplingParams
 
@@ -814,7 +775,6 @@ def build_sglang_thinker_request(
     input_ids = prompt["input_ids"]
     validate_prompt_token_ids(input_ids, vocab_size)
     original_input_ids = input_ids
-    rid = request_id or "req-0"
 
     attention_mask = prompt.get("attention_mask")
     thinker_inputs = state.thinker_inputs or {}
@@ -825,7 +785,7 @@ def build_sglang_thinker_request(
             original_input_ids,
             thinker_config=thinker_config,
             model_inputs=model_inputs,
-            request_id=rid,
+            request_id=request_id or "req-0",
         )
     else:
         pass
@@ -877,6 +837,16 @@ def build_sglang_thinker_request(
     seed = resolve_seed(params)
 
     # Build SGLang SamplingParams and normalize
+    if use_mlx() and (temperature != 0 or repetition_penalty != 1):
+        raise ValueError(
+            "Qwen3-Omni MLX thinker requires temperature=0 and repetition_penalty=1"
+        )
+    else:
+        pass
+    if use_mlx() and params.get("return_logprob"):
+        raise ValueError("Qwen3-Omni MLX thinker does not support return_logprob")
+    else:
+        pass
     sampling_params = SamplingParams(
         max_new_tokens=max_new_tokens,
         temperature=temperature,
@@ -892,6 +862,7 @@ def build_sglang_thinker_request(
     sampling_params.verify(vocab_size)
 
     # Build SGLang Req
+    rid = request_id or "req-0"
     req = Req(
         rid=rid,
         origin_input_text="",
@@ -1165,7 +1136,7 @@ def apply_thinker_result(
 
 
 def make_thinker_stream_output_builder(
-    *, speech_enabled: bool = True, mlx_prompt_hidden_layer: int | None = None
+    *, speech_enabled: bool
 ) -> Callable[[str, SGLangARRequestData, RequestOutput], list[OutgoingMessage]]:
     def _build_stream_output(
         request_id: str, req_data: SGLangARRequestData, req_output: RequestOutput
@@ -1198,34 +1169,29 @@ def make_thinker_stream_output_builder(
         # note (ratish): a cross-process stream chunk must be a tensor, and one
         # this small is pickled inline with the control message
         token_tensor = torch.tensor([token_id], dtype=torch.long)
-        messages = []
-        for target in stream_targets:
-            stream_data = token_tensor
-            metadata = {"token_id": token_id}
-            if target == "talker_ar" and mlx_prompt_hidden_layer is not None:
-                captures = (req_output.extra or {}).get("hidden_states", {})
-                prompt_hidden = captures.get("mlx_prompt_hidden")
-                if prompt_hidden is None:
-                    stream_data = captures["embed"]
-                    if stream_data.ndim == 2:
-                        stream_data = stream_data[0]
-                    else:
-                        pass
-                else:
-                    stream_data = prompt_hidden
-                    metadata["prompt_hidden_layer"] = mlx_prompt_hidden_layer
-            else:
-                pass
-            messages.append(
-                OutgoingMessage(
-                    request_id=request_id,
-                    type="stream",
-                    data=stream_data,
-                    target=target,
-                    metadata=metadata,
-                )
+        prompt_hidden = getattr(req_data.req, "omni_mlx_prompt_hidden", None)
+        req_data.req.omni_mlx_prompt_hidden = None
+        return [
+            OutgoingMessage(
+                request_id=request_id,
+                type="stream",
+                data=(
+                    prompt_hidden
+                    if target == "talker_ar" and prompt_hidden is not None
+                    else token_tensor
+                ),
+                target=target,
+                metadata={
+                    "token_id": token_id,
+                    **(
+                        {"prompt_hidden_layer": req_data.req.omni_mlx_capture_layer}
+                        if target == "talker_ar" and prompt_hidden is not None
+                        else {}
+                    ),
+                },
             )
-        return messages
+            for target in stream_targets
+        ]
 
     return _build_stream_output
 
@@ -1273,9 +1239,8 @@ def make_talker_scheduler_adapters(
     *,
     tokenizer: PreTrainedTokenizerBase | TiktokenTokenizer | None,
     codec_vocab_size: int,
-    prefill_builder: TalkerPrefillBuilderProtocol | None = None,
-    model: Qwen3OmniTalker | None = None,
-    model_path: str | None = None,
+    model: Qwen3OmniTalker,
+    model_path: str,
     thinker_config: Qwen3OmniMoeThinkerConfig | None,
     codec_bos_id: int = 2149,
     codec_eos_id: int | None = None,
@@ -1302,60 +1267,53 @@ def make_talker_scheduler_adapters(
     Callable[[SGLangARRequestData], None],
 ]:
     """Build model-specific StagePayload <-> scheduler adapters for talker."""
-    if prefill_builder is None:
-        if model is None or model_path is None:
-            raise ValueError(
-                "A talker model and model_path or prefill_builder are required"
-            )
-        else:
-            prefill_builder = TalkerPrefillBuilder(
-                model=model,
-                model_path=model_path,
-                audio_token_id=audio_token_id,
-                image_token_id=image_token_id,
-                video_token_id=video_token_id,
-                tts_bos_token_id=tts_bos_token_id,
-                tts_eos_token_id=tts_eos_token_id,
-                tts_pad_token_id=tts_pad_token_id,
-                im_start_token_id=im_start_token_id,
-                im_end_token_id=im_end_token_id,
-                system_token_id=system_token_id,
-                user_token_id=user_token_id,
-                assistant_token_id=assistant_token_id,
-                codec_bos_id=codec_bos_id,
-                codec_nothink_id=codec_nothink_id,
-                codec_think_bos_id=codec_think_bos_id,
-                codec_think_eos_id=codec_think_eos_id,
-                codec_pad_id=codec_pad_id,
-                speaker_map=speaker_map,
-            )
-    else:
-        pass
+    if use_mlx():
+        from sglang_omni.models.qwen3_omni.mlx.talker_prefill import (
+            MlxTalkerPrefillBuilder,
+        )
 
-    def _resolve_talker_sampling_config(params: dict[str, Any]) -> dict[str, Any]:
-        apple_backend = qwen3_omni_uses_apple_backend()
-        resolved_codec_eos_id = int(codec_eos_id) if codec_eos_id is not None else -1
+        builder_class = MlxTalkerPrefillBuilder
+    else:
+        builder_class = TalkerPrefillBuilder
+    prefill_builder = builder_class(
+        model=model,
+        model_path=model_path,
+        audio_token_id=audio_token_id,
+        image_token_id=image_token_id,
+        video_token_id=video_token_id,
+        tts_bos_token_id=tts_bos_token_id,
+        tts_eos_token_id=tts_eos_token_id,
+        tts_pad_token_id=tts_pad_token_id,
+        im_start_token_id=im_start_token_id,
+        im_end_token_id=im_end_token_id,
+        system_token_id=system_token_id,
+        user_token_id=user_token_id,
+        assistant_token_id=assistant_token_id,
+        codec_bos_id=codec_bos_id,
+        codec_nothink_id=codec_nothink_id,
+        codec_think_bos_id=codec_think_bos_id,
+        codec_think_eos_id=codec_think_eos_id,
+        codec_pad_id=codec_pad_id,
+        speaker_map=speaker_map,
+        device=torch.device("cpu") if use_mlx() else None,
+    )
+
+    def _resolve_talker_sampling_config(
+        params: Mapping[str, object],
+    ) -> TalkerSamplingConfig:
+        codec_eos_id = int(getattr(model.config, "codec_eos_token_id", -1))
         suppress_tokens = [
             token_id
             for token_id in range(max(codec_vocab_size - 1024, 0), codec_vocab_size)
-            if token_id != resolved_codec_eos_id
+            if token_id != codec_eos_id
         ]
         return {
             "max_new_tokens": int(params.get("talker_max_new_tokens", 4096)),
-            "temperature": float(
-                params.get("talker_temperature", 0.0 if apple_backend else 0.9)
-            ),
-            "top_k": int(params.get("talker_top_k", -1 if apple_backend else 50)),
+            "temperature": float(params.get("talker_temperature", 0.9)),
+            "top_k": int(params.get("talker_top_k", 50)),
             "top_p": float(params.get("talker_top_p", 1.0)),
-            "repetition_penalty": float(
-                params.get(
-                    "talker_repetition_penalty",
-                    1.0 if apple_backend else 1.05,
-                )
-            ),
-            "codec_eos_id": (
-                resolved_codec_eos_id if resolved_codec_eos_id >= 0 else None
-            ),
+            "repetition_penalty": float(params.get("talker_repetition_penalty", 1.05)),
+            "codec_eos_id": codec_eos_id if codec_eos_id >= 0 else None,
             "suppress_tokens": suppress_tokens,
             "seed": resolve_seed(params),
         }
@@ -1393,7 +1351,7 @@ def make_talker_scheduler_adapters(
 def build_talker_request_data(
     payload: StagePayload,
     *,
-    prefill_builder: TalkerPrefillBuilderProtocol,
+    prefill_builder: TalkerPrefillBuilder,
     tokenizer: PreTrainedTokenizerBase | TiktokenTokenizer | None,
     codec_vocab_size: int,
     codec_bos_id: int,
@@ -1404,7 +1362,6 @@ def build_talker_request_data(
     resolve_sampling_config: Callable[[dict[str, object]], TalkerSamplingConfig],
 ) -> SGLangARRequestData:
     params = payload.request.params
-    validate_qwen3_omni_apple_request(params, stage_name="talker_ar")
     sampling_cfg = resolve_sampling_config(params)
     if sampling_cfg.get("seed") is None:
         sampling_cfg["seed"] = (

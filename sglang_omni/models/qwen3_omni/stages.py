@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, TypedDict
 
 import torch
 import torch.nn.functional as F
+from sglang.srt.hardware_backend.mlx.runtime import use_mlx
 from sglang.srt.server_args import ServerArgs
 
 from sglang_omni.models.qwen3_omni.bootstrap import create_thinker_scheduler
@@ -104,14 +105,6 @@ class ArMemoryContract:
     mem_fraction_static_pinned: bool
     effective_total_gpu_memory_fraction: float | None
     applied_encoder_mem_reserve: float
-
-
-def qwen3_omni_uses_mlx_backend() -> bool:
-    from sglang_omni.models.qwen3_omni.apple_runtime import (
-        qwen3_omni_uses_mlx_backend as uses_mlx_backend,
-    )
-
-    return uses_mlx_backend()
 
 
 def apply_qwen_thinker_encoder_reserve(
@@ -1045,11 +1038,11 @@ def create_image_encoder_executor(
     from sglang_omni.scheduling.simple_scheduler import SimpleScheduler
     from sglang_omni.utils.device import resolve_concrete_device
 
-    if qwen3_omni_uses_mlx_backend():
-        from sglang_omni.models.qwen3_omni.mlx.vision import Qwen3OmniMlxImageEncoder
+    if use_mlx():
+        from sglang_omni.models.qwen3_omni.mlx.encoders import MlxImageEncoder
 
-        model = Qwen3OmniMlxImageEncoder(model_path)
-        logger.info("Qwen3-Omni image encoder backend=native_mlx")
+        model = MlxImageEncoder(model_path)
+        logger.info("Qwen3-Omni image encoder backend=mlx_native")
     else:
         device = str(resolve_concrete_device(device, gpu_id))
         model = Qwen3OmniImageEncoder(
@@ -1114,7 +1107,7 @@ def create_image_encoder_executor(
     return SimpleScheduler(
         encode,
         batch_compute_fn=_encode_batch,
-        max_batch_size=32,
+        max_batch_size=1 if use_mlx() else 32,
         max_batch_wait_ms=encoder_batch_wait_ms(),
         request_cost_fn=create_image_encoder_request_cost_fn(model),
         max_batch_cost=QWEN3_IMAGE_ENCODER_BATCH_BUDGET_BYTES,
@@ -1132,13 +1125,11 @@ def create_audio_encoder_executor(
     from sglang_omni.scheduling.simple_scheduler import SimpleScheduler
     from sglang_omni.utils.device import resolve_concrete_device
 
-    if qwen3_omni_uses_mlx_backend():
-        from sglang_omni.models.qwen3_omni.mlx.audio import (
-            Qwen3OmniMlxAudioStageEncoder,
-        )
+    if use_mlx():
+        from sglang_omni.models.qwen3_omni.mlx.encoders import MlxAudioEncoder
 
-        model = Qwen3OmniMlxAudioStageEncoder(model_path)
-        logger.info("Qwen3-Omni audio encoder backend=native_mlx")
+        model = MlxAudioEncoder(model_path)
+        logger.info("Qwen3-Omni audio encoder backend=mlx_native")
     else:
         device = str(resolve_concrete_device(device, gpu_id))
         model = Qwen3OmniAudioEncoder(
@@ -1202,7 +1193,7 @@ def create_audio_encoder_executor(
     return SimpleScheduler(
         encode,
         batch_compute_fn=_encode_batch,
-        max_batch_size=32,
+        max_batch_size=1 if use_mlx() else 32,
         max_batch_wait_ms=encoder_batch_wait_ms(),
         batch_wait_when_idle=False,
     )
@@ -1273,17 +1264,10 @@ def create_sglang_thinker_executor_from_config(
         cuda_graph_backend_prefill=prefill_graph_backend,
     )
     overrides["tp_size"] = tp_size
-    from sglang_omni.models.qwen3_omni.apple_runtime import (
-        apply_qwen3_omni_apple_profile,
-        qwen3_omni_uses_apple_backend,
-    )
+    if use_mlx():
+        from sglang_omni.models.qwen3_omni.mlx.policy import apply_mlx_policy
 
-    overrides = apply_qwen3_omni_apple_profile(
-        overrides,
-        explicit_overrides=explicit_overrides,
-        stage_name="thinker",
-    )
-    if qwen3_omni_uses_apple_backend():
+        apply_mlx_policy(overrides, explicit_overrides)
         enable_async_decode = False
         prefill_coalesce_requests = 0
     else:
@@ -1468,18 +1452,10 @@ def create_talker_ar_executor_from_config(
     else:
         pass
     overrides["tp_size"] = tp_size
-    from sglang_omni.models.qwen3_omni.apple_runtime import (
-        apply_qwen3_omni_apple_profile,
-        qwen3_omni_uses_apple_backend,
-    )
+    if use_mlx():
+        from sglang_omni.models.qwen3_omni.mlx.policy import apply_mlx_policy
 
-    overrides = apply_qwen3_omni_apple_profile(
-        overrides,
-        explicit_overrides=explicit_overrides,
-        stage_name="talker_ar",
-    )
-    if qwen3_omni_uses_apple_backend():
-        enable_partial_start = False
+        apply_mlx_policy(overrides, explicit_overrides)
     else:
         pass
     apply_colocated_ar_memory_contract(

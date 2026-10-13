@@ -3,37 +3,27 @@
 
 from __future__ import annotations
 
-import json
 import math
 import re
 from collections.abc import Mapping
-from pathlib import Path
 
 import mlx.core as mx
 import mlx.nn as nn
-from mlx.utils import tree_flatten
-from mlx_lm.models.base import create_attention_mask, scaled_dot_product_attention
-
-from sglang_omni.models.qwen3_omni.mlx.common import load_qwen3_omni_mlx_component
-from sglang_omni.models.qwen3_omni.mlx.config import Code2WavConfig, Qwen3OmniMlxConfig
-from sglang_omni.models.qwen3_omni.mlx.runner import read_qwen3_omni_component_weights
+from mlx_lm.models.base import create_attention_mask
+from mlx_lm.models.llama import Attention, ModelArgs
+from mlx_lm.models.qwen3 import MLP
+from transformers.models.qwen3_omni_moe.configuration_qwen3_omni_moe import (
+    Qwen3OmniMoeCode2WavConfig as Code2WavConfig,
+)
 
 __all__ = [
     "CausalConv1d",
     "CausalConvTranspose1d",
     "Qwen3OmniMlxCode2Wav",
     "SnakeBeta",
-    "load_qwen3_omni_mlx_code2wav",
     "sanitize_code2wav_weights",
 ]
 
-_CODE2WAV_PREFIXES = ("code2wav.",)
-_CODE2WAV_LOCAL_PREFIXES = (
-    "pre_transformer.",
-    "code_embedding.",
-    "upsample.",
-    "decoder.",
-)
 _DROPPED_SUFFIXES = ("rotary_emb.inv_freq", "rotary_emb.original_inv_freq")
 _TRANSPOSED_CONVOLUTION = re.compile(
     r"(?:upsample\.\d+\.0|decoder\.\d+\.block\.1)\.conv\.weight"
@@ -179,110 +169,19 @@ class ConvNeXtBlock(nn.Module):
         return residual + hidden_states.transpose(0, 2, 1)
 
 
-class Code2WavAttention(nn.Module):
+class Code2WavMlp(MLP):
     def __init__(self, config: Code2WavConfig) -> None:
-        super().__init__()
-        if config.hidden_size % config.num_attention_heads:
-            raise ValueError(
-                "code2wav hidden_size must be divisible by num_attention_heads"
-            )
-        else:
-            pass
-        if config.num_attention_heads % config.num_key_value_heads:
-            raise ValueError(
-                "code2wav num_attention_heads must be divisible by "
-                "num_key_value_heads"
-            )
-        else:
-            pass
-        self.num_heads = config.num_attention_heads
-        self.num_kv_heads = config.num_key_value_heads
-        self.head_dim = config.hidden_size // config.num_attention_heads
-        self.scale = self.head_dim**-0.5
-        self.rope = nn.RoPE(
-            self.head_dim,
-            traditional=False,
-            base=config.rope_theta,
-        )
-        self.q_proj = nn.Linear(
-            config.hidden_size,
-            self.num_heads * self.head_dim,
-            bias=config.attention_bias,
-        )
-        self.k_proj = nn.Linear(
-            config.hidden_size,
-            self.num_kv_heads * self.head_dim,
-            bias=config.attention_bias,
-        )
-        self.v_proj = nn.Linear(
-            config.hidden_size,
-            self.num_kv_heads * self.head_dim,
-            bias=config.attention_bias,
-        )
-        self.o_proj = nn.Linear(
-            self.num_heads * self.head_dim,
-            config.hidden_size,
-            bias=config.attention_bias,
-        )
-
-    def __call__(
-        self, hidden_states: mx.array, *, mask: mx.array | str | None
-    ) -> mx.array:
-        batch, length, _ = hidden_states.shape
-        queries = (
-            self.q_proj(hidden_states)
-            .reshape(batch, length, self.num_heads, self.head_dim)
-            .transpose(0, 2, 1, 3)
-        )
-        keys = (
-            self.k_proj(hidden_states)
-            .reshape(batch, length, self.num_kv_heads, self.head_dim)
-            .transpose(0, 2, 1, 3)
-        )
-        values = (
-            self.v_proj(hidden_states)
-            .reshape(batch, length, self.num_kv_heads, self.head_dim)
-            .transpose(0, 2, 1, 3)
-        )
-        queries = self.rope(queries)
-        keys = self.rope(keys)
-        attention = scaled_dot_product_attention(
-            queries,
-            keys,
-            values,
-            cache=None,
-            scale=self.scale,
-            mask=mask,
-        )
-        attention = attention.transpose(0, 2, 1, 3).reshape(batch, length, -1)
-        return self.o_proj(attention)
-
-
-class Code2WavMlp(nn.Module):
-    def __init__(self, config: Code2WavConfig) -> None:
-        super().__init__()
+        super().__init__(config.hidden_size, config.intermediate_size)
         self.hidden_act = config.hidden_act
-        self.gate_proj = nn.Linear(
-            config.hidden_size,
-            config.intermediate_size,
-            bias=False,
-        )
-        self.up_proj = nn.Linear(
-            config.hidden_size,
-            config.intermediate_size,
-            bias=False,
-        )
-        self.down_proj = nn.Linear(
-            config.intermediate_size,
-            config.hidden_size,
-            bias=False,
-        )
 
     def __call__(self, hidden_states: mx.array) -> mx.array:
-        return self.down_proj(
-            activation(self.hidden_act, self.gate_proj(hidden_states))
-            * self.up_proj(hidden_states)
-        )
+        if self.hidden_act == "silu":
+            return super().__call__(hidden_states)
+        else:
+            return self.down_proj(
+                activation(self.hidden_act, self.gate_proj(hidden_states))
+                * self.up_proj(hidden_states)
+            )
 
 
 class LayerScale(nn.Module):
@@ -297,7 +196,22 @@ class LayerScale(nn.Module):
 class Code2WavTransformerLayer(nn.Module):
     def __init__(self, config: Code2WavConfig) -> None:
         super().__init__()
-        self.self_attn = Code2WavAttention(config)
+        if (
+            config.hidden_size % config.num_attention_heads
+            or config.num_attention_heads % config.num_key_value_heads
+        ):
+            raise ValueError("Code2wav attention head counts must divide evenly")
+        else:
+            pass
+        args = ModelArgs.from_dict(
+            {
+                **config.to_dict(),
+                "rope_theta": config.rope_parameters["rope_theta"],
+                "rope_scaling": None,
+                "vocab_size": config.codebook_size,
+            }
+        )
+        self.self_attn = Attention(args)
         self.mlp = Code2WavMlp(config)
         self.input_layernorm = nn.RMSNorm(
             config.hidden_size,
@@ -495,17 +409,11 @@ def sanitize_code2wav_weights(
     *,
     expected_shapes: Mapping[str, tuple[int, ...]],
 ) -> dict[str, mx.array]:
-    """Map official or converted code2wav tensors onto the native MLX model."""
+    """Validate component-local tensors and adapt Torch convolution layouts."""
 
     sanitized: dict[str, mx.array] = {}
     for source_key, value in weights.items():
         key = source_key
-        for prefix in _CODE2WAV_PREFIXES:
-            if key.startswith(prefix):
-                key = key[len(prefix) :]
-                break
-            else:
-                pass
         if key.endswith(_DROPPED_SUFFIXES):
             continue
         else:
@@ -552,46 +460,3 @@ def sanitize_code2wav_weights(
             pass
         sanitized[key] = value
     return sanitized
-
-
-def load_qwen3_omni_mlx_code2wav(model_path: str) -> Qwen3OmniMlxCode2Wav:
-    """Load native code2wav from an official or converted Qwen3-Omni checkpoint."""
-
-    from sglang.srt.hardware_backend.mlx.remote_code_gate import (
-        ensure_remote_code_allowed,
-        resolve_model_directory,
-    )
-
-    directory = Path(resolve_model_directory(model_path))
-    ensure_remote_code_allowed(directory, False)
-    raw = json.loads((directory / "config.json").read_text(encoding="utf-8"))
-    root_config = Qwen3OmniMlxConfig.from_dict(raw)
-    model = Qwen3OmniMlxCode2Wav(root_config.code2wav)
-    expected_shapes = {
-        key: tuple(value.shape) for key, value in tree_flatten(model.parameters())
-    }
-    weights = read_qwen3_omni_component_weights(
-        directory,
-        component="code2wav",
-        official_prefixes=_CODE2WAV_PREFIXES,
-        local_prefixes=_CODE2WAV_LOCAL_PREFIXES,
-    )
-    if any(key.startswith(_CODE2WAV_PREFIXES) for key in weights):
-        # Task 7 removes the generated dense sidecar. Until then, a converted
-        # checkpoint can contain both its native root tensors and the legacy
-        weights = {
-            key: value
-            for key, value in weights.items()
-            if key.startswith(_CODE2WAV_PREFIXES)
-        }
-    else:
-        pass
-    return load_qwen3_omni_mlx_component(
-        model,
-        weights,
-        sanitizer=lambda raw_weights: sanitize_code2wav_weights(
-            raw_weights,
-            expected_shapes=expected_shapes,
-        ),
-        quantization=root_config.quantization,
-    )

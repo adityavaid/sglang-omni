@@ -425,7 +425,8 @@ def test_qwen3_omni_xpu_b60_example_config_loads_and_plans() -> None:
 def test_qwen3_omni_apple_default_config_needs_no_backend_yaml(
     monkeypatch: pytest.MonkeyPatch, use_mlx: bool
 ) -> None:
-    from sglang_omni.models.qwen3_omni import apple_runtime
+    from sglang.srt.hardware_backend.mlx import runtime
+
     from sglang_omni.models.qwen3_omni import config as qwen_config
 
     monkeypatch.setattr(qwen_config.current_platform, "is_mps", lambda: True)
@@ -433,12 +434,7 @@ def test_qwen3_omni_apple_default_config_needs_no_backend_yaml(
     monkeypatch.setattr(
         qwen_config.current_platform, "enable_code2wav_graph", lambda: False
     )
-    monkeypatch.setattr(apple_runtime, "qwen3_omni_uses_mlx_backend", lambda: use_mlx)
-    monkeypatch.setattr(
-        apple_runtime,
-        "validate_qwen3_omni_apple_checkpoint",
-        lambda *args, **kwargs: pytest.fail("placeholder must not access a checkpoint"),
-    )
+    monkeypatch.setattr(runtime, "use_mlx", lambda: use_mlx)
     config = ConfigManager(
         Qwen3OmniSpeechPipelineConfig(model_path="dummy")
     ).merge_config([])
