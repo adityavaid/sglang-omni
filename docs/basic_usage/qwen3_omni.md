@@ -730,6 +730,60 @@ with open("output.wav", "wb") as f:
     f.write(audio_data)
 ```
 
+<a id="apple-silicon-mlx"></a>
+## Integrated MLX on Apple Silicon
+
+This branch supports Qwen3-Omni through the existing Omni Python server,
+pipeline, preprocessing, scheduler, and JSON/SSE response formats. Model
+execution imports MLX-VLM components; it does not use its high-level generation
+API or a standalone server. This is an explicitly approved branch exception
+to the [standalone MLX contribution policy](../developer_reference/mlx.md).
+
+
+The supported input is a **full Omni checkpoint**, such as
+`mlx-community/Qwen3-Omni-30B-A3B-Instruct-4bit`, with its root configuration
+and weight shards.
+
+```bash
+mkdir -p .local-artifacts
+SGLANG_USE_MLX=1 python -m sglang_omni.cli serve \
+  --config examples/configs/qwen3_omni_mlx.yaml \
+  --model-path /path/to/Qwen3-Omni-30B-A3B-Instruct-4bit \
+  --host 127.0.0.1 --port 8008
+```
+
+The canonical YAML's model alias is `qwen3-omni-mlx`. Run from the repository
+root: its relative `.local-artifacts/ipc` endpoints keep Unix socket paths
+short on macOS. Use a short project-local `TMPDIR` if necessary. For a text-only
+pipeline omit `--config` and supply `--text-only`; for text responses on the
+speech pipeline use `"modalities": ["text"]`.
+
+Vision, audio, thinker, talker/code predictor, and code2wav use MLX. Shared
+preprocessing, transport tensors, and output formatting remain on CPU.
+Video uses shared frame sampling, timing, audio interleaving and explicit
+M-RoPE; all visual DeepStack residuals are retained. If the default video
+decoder is unavailable, use the existing `SGLANG_OMNI_VIDEO_READER=pyav`
+option or configure FFmpeg libraries for TorchCodec.
+
+Current limits:
+
+- One active request per AR stage, TP=1, 8192 token slots per AR stage by
+  default. Coordinator queueing remains shared.
+- No radix prefix reuse, chunked/mixed prefill, CUDA graphs, Torch compile,
+  async decode, or partial talker start. Incompatible explicit engine
+  settings raise rather than falling back.
+- Thinker generation requires `temperature: 0` and `repetition_penalty: 1`.
+  Log probabilities are unsupported.
+- Talker supports its existing temperature/top-k/top-p and repetition controls.
+  The residual predictor supports temperature/top-p. `seed` and `sampling_seed`
+  use the shared resolved request seed. Greedy talker settings make residual
+  prediction greedy as well.
+- Codec emission is one frame per message, with feedback enabled. Coalescing
+  and disabling feedback are unsupported.
+
+Both top-level `images`/`audios`/`videos` and supported OpenAI content parts
+remain available.
+
 ## Request Parameters
 
 The table below lists all parameters accepted by the `/v1/chat/completions` endpoint for Qwen3-Omni.
