@@ -1233,7 +1233,6 @@ def create_sglang_thinker_executor_from_config(
 
     concrete_device = resolve_concrete_device(device, gpu_id)
     gpu_id = concrete_device.index or 0
-    explicit_overrides = dict(server_args_overrides or {})
     # note (luojiaxuan):
     # The thinker runs prefill XOR decode per scheduler step, so under
     # concurrent streaming a large fraction of steps are prefill-only while
@@ -1267,13 +1266,11 @@ def create_sglang_thinker_executor_from_config(
     if use_mlx():
         from sglang_omni.models.qwen3_omni.mlx.policy import apply_mlx_policy
 
-        apply_mlx_policy(overrides, explicit_overrides)
+        apply_mlx_policy(overrides, server_args_overrides)
         enable_async_decode = False
         prefill_coalesce_requests = 0
     else:
         pass
-    from sglang_omni.platforms import current_platform
-
     if not current_platform.enable_thinker_decode_graph():
         overrides.setdefault("disable_decode_cuda_graph", True)
     else:
@@ -1419,7 +1416,6 @@ def create_talker_ar_executor_from_config(
     concrete_device = resolve_concrete_device(device, gpu_id)
     gpu_id = concrete_device.index or 0
 
-    explicit_overrides = dict(server_args_overrides or {})
     # Note (Xuesong, Chenyang): cuda_graph defaults to ON for the talker
     # after #384, which routed talker MoE through `self.experts` (FusedMoE)
     # — the `fused_experts (full graph)` backend picked in #344. Caller can
@@ -1455,7 +1451,7 @@ def create_talker_ar_executor_from_config(
     if use_mlx():
         from sglang_omni.models.qwen3_omni.mlx.policy import apply_mlx_policy
 
-        apply_mlx_policy(overrides, explicit_overrides)
+        apply_mlx_policy(overrides, server_args_overrides)
     else:
         pass
     apply_colocated_ar_memory_contract(

@@ -1,8 +1,29 @@
-"""CUDA imports must work when optional MLX packages are absent."""
+"""Backend imports work in fresh interpreters with optional MLX dependencies."""
 
 import os
 import subprocess
 import sys
+
+import pytest
+
+
+@pytest.mark.parametrize(
+    "script",
+    [
+        "import sglang_omni.models.qwen3_omni.request_builders",
+        "import sglang; import sglang_omni.platforms",
+        "import sglang_omni.scheduling.sglang_backend",
+    ],
+)
+def test_apple_import_order(script: str) -> None:
+    pytest.importorskip("mlx.core")
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def test_cuda_stage_imports_do_not_require_mlx():

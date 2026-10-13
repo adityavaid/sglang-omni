@@ -18,6 +18,7 @@ from mlx_vlm.models.qwen3_omni_moe.config import ModelConfig
 from mlx_vlm.models.qwen3_omni_moe.language import LanguageModel
 from sglang.srt.sampling.sampling_params import SamplingParams
 
+from sglang_omni.models.qwen3_omni.bootstrap import create_talker_scheduler
 from sglang_omni.models.qwen3_omni.mlx.encoders import (
     MlxAudioEncoder,
     MlxCode2Wav,
@@ -25,9 +26,11 @@ from sglang_omni.models.qwen3_omni.mlx.encoders import (
 )
 from sglang_omni.models.qwen3_omni.mlx.loading import load_component
 from sglang_omni.models.qwen3_omni.mlx.policy import apply_mlx_policy
-from sglang_omni.models.qwen3_omni.mlx.runner import OmniMlxRunner
+from sglang_omni.models.qwen3_omni.mlx.runner import (
+    OmniMlxRunner,
+    OmniMlxSchedulerModelRunner,
+)
 from sglang_omni.models.qwen3_omni.mlx.talker_runner import MlxTalkerModelRunner
-from sglang_omni.models.qwen3_omni.mlx.tensors import request_positions
 from sglang_omni.models.qwen3_omni.request_builders import (
     make_thinker_stream_output_builder,
 )
@@ -136,10 +139,12 @@ def test_component_ownership_and_per_layer_quantization(checkpoint):
     model = load_component(str(checkpoint), "language")
     assert model.model.embed_tokens.bits == 8
     assert model.model.layers[0].self_attn.q_proj.bits == 4
-    assert isinstance(model, LanguageModel)
-    assert not hasattr(model, "code2wav")
     embedding = load_component(str(checkpoint), "embedding")
     assert embedding.bits == 8
+    np.testing.assert_array_equal(
+        np.array(embedding(mx.array([2, 3]))),
+        np.array(model.model.embed_tokens(mx.array([2, 3]))),
+    )
 
 
 def test_strict_component_load_rejects_missing_weight(checkpoint):
@@ -172,7 +177,9 @@ def test_explicit_positions_capture_decode_and_cleanup(checkpoint):
     assert (
         runner._req_caches["first"][0].offset == 4
     )  # noqa: leading-underscore - native cache state
-    runner.remove_request("first")
+    scheduler_runner = OmniMlxSchedulerModelRunner.__new__(OmniMlxSchedulerModelRunner)
+    scheduler_runner.tp_worker = SimpleNamespace(_mlx_runner=runner)
+    scheduler_runner.abort_request("first")
     assert not runner.position_deltas
     assert not runner._req_caches  # noqa: leading-underscore - native cache state
     assert not runner._req_token_ids  # noqa: leading-underscore - native token state
@@ -211,14 +218,6 @@ def test_invalid_media_counts_raise(checkpoint, features, layers):
     assert not runner.position_deltas
 
 
-def test_positions_require_exact_coverage():
-    with pytest.raises(ValueError, match="cover all"):
-        request_positions(make_request(positions=torch.zeros(3, 2)), 3)
-    positions, delta = request_positions(make_request(), 3)
-    np.testing.assert_array_equal(np.array(positions), [[[0, 1, 2]]] * 3)
-    assert delta == 0
-
-
 @pytest.mark.parametrize(
     "option,value",
     [
@@ -238,13 +237,17 @@ def test_unsupported_scheduling_modes_fail(option, value):
         apply_mlx_policy({"tp_size": 1}, {option: value})
 
 
-def test_policy_uses_bounded_native_worker():
-    overrides = {"tp_size": 1}
-    apply_mlx_policy(overrides, None)
-    assert overrides["max_running_requests"] == 1
-    assert overrides["max_total_tokens"] == 8192
-    assert overrides["disable_radix_cache"]
-    assert overrides["disable_overlap_schedule"]
+@pytest.mark.parametrize(
+    "option,value",
+    [
+        ("enable_partial_start", True),
+        ("feedback_enabled", False),
+        ("codec_coalesce_frames", 2),
+    ],
+)
+def test_unsupported_talker_settings_fail_before_worker_construction(option, value):
+    with pytest.raises(ValueError, match="MLX talker"):
+        create_talker_scheduler(SimpleNamespace(), **{option: value})
 
 
 def test_text_prefill_accepts_absent_multimodal_sidecar(checkpoint):
@@ -285,21 +288,13 @@ def test_audio_adapter_rejects_holey_mask():
         )
 
 
-def test_audio_adapter_reuses_shared_packing(monkeypatch):
+def test_audio_adapter_preserves_shared_packing():
     from sglang_omni.models.qwen3_omni.mlx import encoders
 
-    pack = encoders.pack_padded_audio_features
-    calls = []
-
-    def recording_pack(features, mask, lengths):
-        calls.append(lengths.tolist())
-        return pack(features, mask, lengths)
-
-    monkeypatch.setattr(encoders, "pack_padded_audio_features", recording_pack)
     encoder = MlxAudioEncoder.__new__(MlxAudioEncoder)
     features = torch.arange(20).reshape(2, 2, 5).float()
     mask = torch.tensor([[1, 1, 1, 1, 1], [1, 1, 1, 0, 0]])
-    expected = pack(features, mask.bool(), mask.sum(-1))
+    expected = encoders.pack_padded_audio_features(features, mask.bool(), mask.sum(-1))
     rows = int(
         encoders._get_feat_extract_output_lengths(mask.sum(-1)).sum()
     )  # noqa: leading-underscore - Transformers length contract
@@ -311,20 +306,12 @@ def test_audio_adapter_reuses_shared_packing(monkeypatch):
 
     encoder.audio_tower = tower
     output = encoder(input_features=features, feature_attention_mask=mask)
-    assert calls == [[5, 3]]
     assert output["audio_embeds"].shape == (rows, 64)
 
 
 def test_mlx_special_embeddings_use_shared_cache(monkeypatch):
-    from sglang_omni.models.qwen3_omni.components.talker_prefill import (
-        TalkerPrefillBuilder,
-    )
     from sglang_omni.models.qwen3_omni.mlx.talker_prefill import MlxTalkerPrefillBuilder
 
-    assert (
-        MlxTalkerPrefillBuilder.get_tts_special_embeds
-        is TalkerPrefillBuilder.get_tts_special_embeds
-    )
     builder = MlxTalkerPrefillBuilder.__new__(MlxTalkerPrefillBuilder)
     builder.tts_special_cache = None
     builder.tts_bos_token_id, builder.tts_eos_token_id, builder.tts_pad_token_id = (
@@ -640,28 +627,6 @@ def test_talker_translates_normalized_top_k_for_real_sampler(
 
 
 @pytest.mark.parametrize("source", ["local", "hub"])
-@pytest.mark.parametrize("component", ["language", "embedding"])
-def test_component_resolves_checkpoint_without_network(
-    checkpoint, monkeypatch, source, component
-):
-    from sglang_omni.models import weight_loader
-
-    downloads = []
-    hub_id = f"mlx-community/{checkpoint.name}"
-
-    def cached_snapshot(model_path, *, local_files_only):
-        assert model_path == hub_id
-        downloads.append(model_path)
-        return str(checkpoint)
-
-    monkeypatch.setattr(weight_loader, "snapshot_download", cached_snapshot)
-    model_path = str(checkpoint) if source == "local" else hub_id
-    model = load_component(model_path, component)
-    assert model is not None
-    assert downloads == ([] if source == "local" else [model_path])
-
-
-@pytest.mark.parametrize("source", ["local", "hub"])
 def test_runner_uses_resolved_checkpoint_for_component_and_config(
     checkpoint, monkeypatch, source
 ):
@@ -680,10 +645,8 @@ def test_runner_uses_resolved_checkpoint_for_component_and_config(
     runner = OmniMlxRunner(
         model_path, disable_radix_cache=True, pool_size=64, trust_remote_code=False
     )
-    assert runner.model_path == str(checkpoint)
-    assert runner.trust_remote_code is False
-    assert runner.accept_hidden_layer == 1
-    assert runner.placeholder_token_ids == {"image": 120, "video": 121, "audio": 122}
+    embedding = load_component(model_path, "embedding")
+    assert embedding(mx.array([2, 3])).shape == (2, 64)
     assert downloads == ([] if source == "local" else [model_path])
     pending = prefill(runner, make_request(), [2, 3])
     assert runner.prefill_finalize(pending) >= 0

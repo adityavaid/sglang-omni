@@ -36,6 +36,10 @@ def load_component(model_path: str, component: Component) -> nn.Module:
     else:
         pass
     config = ModelConfig.from_dict(raw)
+    if component in ("talker", "code2wav") and not config.enable_audio_output:
+        raise ValueError("The checkpoint has no audio output components")
+    else:
+        pass
     namespace = nn.Module()
     if component in ("language", "vision", "audio", "embedding"):
         namespace.thinker = nn.Module()
@@ -57,17 +61,9 @@ def load_component(model_path: str, component: Component) -> nn.Module:
             namespace.thinker.language_model.model = nn.Module()
             namespace.thinker.language_model.model.embed_tokens = model
     elif component == "talker":
-        if not config.enable_audio_output:
-            raise ValueError("The checkpoint has no audio output components")
-        else:
-            pass
         model = Talker(config.talker_config)
         namespace.talker = model
     else:
-        if not config.enable_audio_output:
-            raise ValueError("The checkpoint has no audio output components")
-        else:
-            pass
         model = Code2WavModel(config.code2wav_config)
         namespace.code2wav = model
 
@@ -102,7 +98,6 @@ def load_component(model_path: str, component: Component) -> nn.Module:
     else:
         pass
     load_model_weights(namespace, raw, weights, directory, strict=True)
-    namespace.eval()
     if component == "talker":
         # note (Copilot): This library rotary object is not an nn.Module; materialize
         # its lazy buffer before the model moves from loader to scheduler thread.

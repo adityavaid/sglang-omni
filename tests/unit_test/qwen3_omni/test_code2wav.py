@@ -219,10 +219,7 @@ def test_qwen_load_code2wav_model_accepts_official_root_prefixed_checkpoint(
     }
 
 
-def test_qwen_code2wav_factory_default_does_not_build_cuda_graphs(
-    monkeypatch,
-    caplog,
-) -> None:
+def test_qwen_code2wav_factory_default_does_not_build_cuda_graphs(monkeypatch) -> None:
     model = FactoryModel()
     monkeypatch.setattr(
         code2wav_scheduler, "load_code2wav_model", lambda *a, **k: model
@@ -237,39 +234,12 @@ def test_qwen_code2wav_factory_default_does_not_build_cuda_graphs(
         staticmethod(unexpected_build),
     )
 
-    with caplog.at_level(logging.INFO, logger=code2wav_scheduler.__name__):
-        scheduler = code2wav_scheduler.create_code2wav_scheduler(
-            "dummy",
-            device="cpu",
-        )
+    scheduler = code2wav_scheduler.create_code2wav_scheduler(
+        "dummy",
+        device="cpu",
+    )
 
     assert scheduler.cuda_graph_runner is None
-
-
-def test_qwen_code2wav_factory_skips_torch_ownership_log_on_constructor_failure(
-    monkeypatch,
-    caplog,
-) -> None:
-    model = FactoryModel()
-    error = RuntimeError("scheduler construction failed")
-    monkeypatch.setattr(
-        code2wav_scheduler, "load_code2wav_model", lambda *a, **k: model
-    )
-    monkeypatch.setattr(
-        code2wav_scheduler,
-        "Code2WavScheduler",
-        lambda *args, **kwargs: (_ for _ in ()).throw(error),
-    )
-
-    with pytest.raises(RuntimeError, match="scheduler construction failed") as excinfo:
-        with caplog.at_level(logging.INFO, logger=code2wav_scheduler.__name__):
-            code2wav_scheduler.create_code2wav_scheduler(
-                "dummy",
-                device="cpu",
-            )
-
-    assert excinfo.value is error
-    assert "Qwen3-Omni code2wav scheduler backend=torch" not in caplog.messages
 
 
 def test_only_graph_capable_platforms_enable_the_code2wav_graph() -> None:

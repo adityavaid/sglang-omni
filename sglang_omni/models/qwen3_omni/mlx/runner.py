@@ -158,7 +158,7 @@ class OmniMlxRunner(MlxModelRunner):
                 continue
             else:
                 pass
-            if features.ndim != 2 or features.shape != (
+            if features.shape != (
                 len(positions),
                 embeddings.shape[-1],
             ):

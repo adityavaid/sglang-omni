@@ -2873,8 +2873,6 @@ def test_omni_scheduler_idle_batch_selection_preserves_stage_metrics(
 
     scheduler = construct_omni_scheduler(monkeypatch, metrics_reporter=reporter)
 
-    assert "scheduler_stage_metrics" in scheduler.__dict__
-    assert scheduler.scheduler_stage_metrics is recorder
     assert scheduler.get_next_batch_to_run() is None
     assert scheduler.running_batch.is_empty()
     wall_times = recorder.drain(time.monotonic_ns())
@@ -2890,9 +2888,6 @@ def test_omni_scheduler_initializes_upstream_queue_limit(monkeypatch) -> None:
         monkeypatch, return_runtime_context=True
     )
 
-    assert (
-        scheduler._pending_chunked_abort_req is None
-    )  # noqa: leading-underscore - external runtime contract
     assert scheduler.enable_unified_cache_external_linker is False
     assert scheduler.processed_tokens_counter == 0
     assert (

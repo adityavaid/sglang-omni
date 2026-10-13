@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import base64
-from typing import Any, ClassVar
+from typing import ClassVar
 
 from pydantic import Field
 
@@ -475,16 +475,13 @@ class Qwen3OmniSpeechPipelineConfig(Qwen3OmniBasePipelineConfig):
         else:
             pass
         if stage_name == "code2wav":
-            kwargs: dict[str, Any] = {
+            kwargs = {
                 "enable_cuda_graph": current_platform.enable_code2wav_graph(),
                 "talker_in_process": code2wav_shares_talker_process,
             }
             if current_platform.is_mps():
-                # Apple's single Metal device has no CUDA events, pinned D2H
-                # overlap buffers, or graph capture; force these off at the
-                # seam that actually supplies code2wav factory arguments.
+                # note (Copilot): Output overlap requires CUDA events and pinned buffers.
                 kwargs["enable_output_overlap"] = False
-                kwargs["enable_cuda_graph"] = False
             else:
                 pass
             return kwargs

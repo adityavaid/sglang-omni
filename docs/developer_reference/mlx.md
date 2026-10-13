@@ -3,29 +3,6 @@
 Rules for Apple Silicon work. They write down what the native runtime PRs under
 [#2537](https://github.com/sgl-project/sglang-omni/issues/2537) already do.
 
-## Integrated Qwen3-Omni branch exception
-
-This branch also carries an explicitly selected **integrated Python Qwen3-Omni
-experiment**, following its existing Qwen3-ASR MLX worker path. This is an
-exception to the standalone contribution policy below, not a claim of upstream
-policy or native Mac CI compliance.
-
-Its adapters live in `sglang_omni/models/qwen3_omni/mlx/`. MLX-VLM at revision
-`fb4b1e2f340249ca2ff17ba2e70e61049d6d4d33` owns the model implementations.
-The adapters load only each stage's checkpoint namespace, use the library's
-sanitizers and per-module quantized weight loader, and reuse Omni's pipeline,
-native MLX worker, scheduler, prompt builder, vocoder scheduler, and HTTP API.
-There is no separate Python server or copied MLX model architecture.
-
-The thinker passes explicit Omni M-RoPE positions, video timing, and every
-DeepStack residual to MLX-VLM. The selected hidden-state index is the
-post-block capture convention (`24` means after block `23`). Prompt captures
-travel through the existing thinker-to-talker stream. KV caches and position
-deltas are request-local and released on completion/cancellation.
-
-See [Qwen3-Omni usage](../basic_usage/qwen3_omni.md#integrated-mlx-on-apple-silicon)
-for dependencies, launch configuration, and current scheduling limits.
-
 ## Layout
 
 | Path | Contents |

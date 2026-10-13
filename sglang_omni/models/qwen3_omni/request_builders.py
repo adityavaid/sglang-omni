@@ -84,27 +84,6 @@ def resolve_seed(params: Mapping[str, object]) -> int | None:
     return None
 
 
-def encoder_row_count(
-    value: torch.Tensor | list[torch.Tensor] | tuple[torch.Tensor, ...] | None,
-) -> int:
-    """Rows an encoder produced for one modality (``0`` when it produced none).
-
-    ``merge_for_thinker`` may hand a modality's rows over as one tensor or as a
-    sequence of chunks, so both shapes
-    have to be counted the same way.
-    """
-
-    if value is None:
-        return 0
-    else:
-        pass
-    if isinstance(value, (list, tuple)):
-        return sum(int(part.shape[0]) for part in value)
-    else:
-        pass
-    return int(value.shape[0])
-
-
 def validate_modality_placeholder_counts(
     input_ids: torch.Tensor,
     *,
@@ -112,34 +91,26 @@ def validate_modality_placeholder_counts(
     model_inputs: dict[str, object],
     request_id: str,
 ) -> None:
-    """Reject a request whose encoder rows cannot fill its placeholders.
-
-    Both Apple thinkers scatter encoder rows onto the *absolute* placeholder
-    positions recorded in ``req._omni_mm_positions``. Several separate runs of
-    one modality -- two images, two audio clips, or audio interleaved into a
-    video -- are therefore placed correctly and are accepted: the public API
-    takes a list for every modality and the chat template emits one placeholder
-    span per item.
-
-    What the runners cannot absorb is a *count* mismatch. A short row block
-    would leave placeholder positions holding their plain text embedding and a
-    long one would be silently truncated, so either is fatal here, before the
-    cache-key substitution rewrites the prompt.
-    """
+    """Validate encoder row counts before cache-key substitution rewrites placeholders."""
 
     if not use_mlx():
         return
     else:
         pass
     flattened = input_ids.reshape(-1)
-    for modality, embeds_key in (
-        ("image", "image_embeds"),
-        ("video", "video_embeds"),
-        ("audio", "audio_embeds"),
+    for modality, token_id in (
+        ("image", thinker_config.image_token_id),
+        ("video", thinker_config.video_token_id),
+        ("audio", thinker_config.audio_token_id),
     ):
-        token_id = int(getattr(thinker_config, f"{modality}_token_id"))
         placeholders = int((flattened == token_id).sum())
-        rows = encoder_row_count(model_inputs.get(embeds_key))
+        embeddings = model_inputs.get(f"{modality}_embeds")
+        if embeddings is None:
+            rows = 0
+        elif isinstance(embeddings, (list, tuple)):
+            rows = sum(part.shape[0] for part in embeddings)
+        else:
+            rows = embeddings.shape[0]
         if rows == placeholders:
             continue
         else:
