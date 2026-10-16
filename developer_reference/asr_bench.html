@@ -61,7 +61,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
   <meta name="docsearch:version" content="0.1.8" />
-    <meta name="docbuild:last-update" content="Oct 13, 2026"/>
+    <meta name="docbuild:last-update" content="Oct 16, 2026"/>
   
     
     <script src="../_static/searchtools.js"></script>
@@ -215,8 +215,10 @@
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Cookbook</span></p>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../cookbook/higgs_tts.html">Higgs TTS</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../cookbook/nemotron_diarization.html">Nemotron 3 Diarization</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../cookbook/voxtral_tts.html">Voxtral TTS</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../cookbook/fishaudio_s2_pro.html">Fish Audio S2-Pro</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../cookbook/fishaudio_drama3.html">Fish Audio Drama 3</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../cookbook/qwen3_tts.html">Qwen3 TTS</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../cookbook/ming_tts.html">Ming-Omni-TTS</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../cookbook/moss_tts.html">MOSS-TTS</a></li>
@@ -250,11 +252,6 @@
 <li class="toctree-l1"><a class="reference internal" href="../basic_usage/omni_router.html">SGLang-Omni Rust Router</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../basic_usage/mps_dp.html">Same-GPU Data Parallelism with CUDA MPS</a></li>
 </ul>
-<p aria-level="2" class="caption" role="heading"><span class="caption-text">Benchmarks</span></p>
-<ul class="nav bd-sidenav">
-<li class="toctree-l1"><a class="reference internal" href="../benchmarks/relay.html">Benchmark Relay</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../benchmarks/qwen3_tts_leading_silence.html">Qwen3-TTS Base: Leading Silence in X-Vector Voice Cloning</a></li>
-</ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Developer Reference</span></p>
 <ul class="current nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="main.html">Architecture</a></li>
@@ -267,11 +264,13 @@
 <li class="toctree-l1"><a class="reference internal" href="profiler.html">Request-level profiler</a></li>
 <li class="toctree-l1"><a class="reference internal" href="qwen3_asr_concurrency_profile.html">Qwen3-ASR High-Concurrency Benchmark and Bottleneck Profile</a></li>
 <li class="toctree-l1"><a class="reference internal" href="full_duplex_bench.html">Full-Duplex-Bench runbook</a></li>
+<li class="toctree-l1"><a class="reference internal" href="full_duplex_metrics.html">Full-Duplex-Bench v1.0 unified metrics</a></li>
 <li class="toctree-l1"><a class="reference internal" href="tts_bench.html">TTS benchmark runbook</a></li>
 <li class="toctree-l1 current active"><a class="current reference internal" href="#">ASR benchmark runbook</a></li>
 <li class="toctree-l1"><a class="reference internal" href="omni_offline_bench.html">MiniCPM-o offline benchmark runbook</a></li>
 <li class="toctree-l1"><a class="reference internal" href="rl_admin_control.html">RL Admin Control</a></li>
 <li class="toctree-l1"><a class="reference internal" href="mlx.html">MLX Path</a></li>
+<li class="toctree-l1"><a class="reference internal" href="ci_labels.html">CI Workflows and Labels</a></li>
 <li class="toctree-l1"><a class="reference internal" href="bump_version.html">Bumping the SGLang Pin</a></li>
 </ul>
 
@@ -565,7 +564,7 @@
 </tbody>
 </table>
 </div>
-<p>CI stage 1 also has <code class="docutils literal notranslate"><span class="pre">aishell4_long90</span></code>, one 90 minute sample stitched together from three <code class="docutils literal notranslate"><span class="pre">aishell4_long</span></code> clips. It only runs through pytest (see <a class="reference internal" href="#run-the-ci-tests"><span class="std std-ref">Run the CI tests</span></a>). CI stage 2 runs one of the three models per CI run, picked at random unless a <code class="docutils literal notranslate"><span class="pre">run-fun-asr</span></code>, <code class="docutils literal notranslate"><span class="pre">run-qwen3-asr</span></code> or <code class="docutils literal notranslate"><span class="pre">run-whisper-asr</span></code> label is set.</p>
+<p>CI stage 1 also has <code class="docutils literal notranslate"><span class="pre">aishell4_long90</span></code>, one 90 minute sample stitched together from three <code class="docutils literal notranslate"><span class="pre">aishell4_long</span></code> clips. It only runs through pytest (see <a class="reference internal" href="#run-the-ci-tests"><span class="std std-ref">Run the CI tests</span></a>). CI stage 2 runs one of the three models per CI run, picked at random unless a <code class="docutils literal notranslate"><span class="pre">run-asr-fun-asr-nano-2512</span></code>, <code class="docutils literal notranslate"><span class="pre">run-asr-qwen3-asr-1.7b</span></code> or <code class="docutils literal notranslate"><span class="pre">run-asr-whisper-large-v3</span></code> label is set with <code class="docutils literal notranslate"><span class="pre">run-asr-ci</span></code> or <code class="docutils literal notranslate"><span class="pre">run-all-ci</span></code>.</p>
 <p>This page uses one server on one GPU, with the same datasets, concurrency and request settings as CI.</p>
 </section>
 <section id="variables">
@@ -1079,7 +1078,7 @@ By SGLang-Omni Team
   
   <div class="footer-item">
     <p class="last-updated">
-  Last updated on Oct 13, 2026.
+  Last updated on Oct 16, 2026.
   <br/>
 </p>
   </div>

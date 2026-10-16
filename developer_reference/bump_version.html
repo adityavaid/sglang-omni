@@ -56,11 +56,11 @@
     <link rel="icon" href="../_static/logo.ico"/>
     <link rel="index" title="Index" href="../genindex.html" />
     <link rel="search" title="Search" href="../search.html" />
-    <link rel="prev" title="MLX Path" href="mlx.html" />
+    <link rel="prev" title="CI Workflows and Labels" href="ci_labels.html" />
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
   <meta name="docsearch:version" content="0.1.8" />
-    <meta name="docbuild:last-update" content="Oct 13, 2026"/>
+    <meta name="docbuild:last-update" content="Oct 16, 2026"/>
   
     
     <script src="../_static/searchtools.js"></script>
@@ -214,8 +214,10 @@
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Cookbook</span></p>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../cookbook/higgs_tts.html">Higgs TTS</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../cookbook/nemotron_diarization.html">Nemotron 3 Diarization</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../cookbook/voxtral_tts.html">Voxtral TTS</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../cookbook/fishaudio_s2_pro.html">Fish Audio S2-Pro</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../cookbook/fishaudio_drama3.html">Fish Audio Drama 3</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../cookbook/qwen3_tts.html">Qwen3 TTS</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../cookbook/ming_tts.html">Ming-Omni-TTS</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../cookbook/moss_tts.html">MOSS-TTS</a></li>
@@ -249,11 +251,6 @@
 <li class="toctree-l1"><a class="reference internal" href="../basic_usage/omni_router.html">SGLang-Omni Rust Router</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../basic_usage/mps_dp.html">Same-GPU Data Parallelism with CUDA MPS</a></li>
 </ul>
-<p aria-level="2" class="caption" role="heading"><span class="caption-text">Benchmarks</span></p>
-<ul class="nav bd-sidenav">
-<li class="toctree-l1"><a class="reference internal" href="../benchmarks/relay.html">Benchmark Relay</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../benchmarks/qwen3_tts_leading_silence.html">Qwen3-TTS Base: Leading Silence in X-Vector Voice Cloning</a></li>
-</ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Developer Reference</span></p>
 <ul class="current nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="main.html">Architecture</a></li>
@@ -266,11 +263,13 @@
 <li class="toctree-l1"><a class="reference internal" href="profiler.html">Request-level profiler</a></li>
 <li class="toctree-l1"><a class="reference internal" href="qwen3_asr_concurrency_profile.html">Qwen3-ASR High-Concurrency Benchmark and Bottleneck Profile</a></li>
 <li class="toctree-l1"><a class="reference internal" href="full_duplex_bench.html">Full-Duplex-Bench runbook</a></li>
+<li class="toctree-l1"><a class="reference internal" href="full_duplex_metrics.html">Full-Duplex-Bench v1.0 unified metrics</a></li>
 <li class="toctree-l1"><a class="reference internal" href="tts_bench.html">TTS benchmark runbook</a></li>
 <li class="toctree-l1"><a class="reference internal" href="asr_bench.html">ASR benchmark runbook</a></li>
 <li class="toctree-l1"><a class="reference internal" href="omni_offline_bench.html">MiniCPM-o offline benchmark runbook</a></li>
 <li class="toctree-l1"><a class="reference internal" href="rl_admin_control.html">RL Admin Control</a></li>
 <li class="toctree-l1"><a class="reference internal" href="mlx.html">MLX Path</a></li>
+<li class="toctree-l1"><a class="reference internal" href="ci_labels.html">CI Workflows and Labels</a></li>
 <li class="toctree-l1 current active"><a class="current reference internal" href="#">Bumping the SGLang Pin</a></li>
 </ul>
 
@@ -842,15 +841,12 @@ inherited upstream change a user can observe, and the A/B with both arms’
 commits and image digests, sample counts and the profiler attribution for
 any delta outside noise. Measurements and inferences are labeled as what
 they are.</p>
-<p>GPU CI needs the <code class="docutils literal notranslate"><span class="pre">run-ci</span></code> label. Model selectors choose presets within each
-family: TTS (<code class="docutils literal notranslate"><span class="pre">run-higgs</span></code>, <code class="docutils literal notranslate"><span class="pre">run-moss</span></code>, <code class="docutils literal notranslate"><span class="pre">run-qwen3-tts</span></code>, <code class="docutils literal notranslate"><span class="pre">run-cosyvoice3</span></code>,
-<code class="docutils literal notranslate"><span class="pre">run-qwen3-tts-custom-voice</span></code>), ASR (<code class="docutils literal notranslate"><span class="pre">run-fun-asr</span></code>, <code class="docutils literal notranslate"><span class="pre">run-qwen3-asr</span></code>,
-<code class="docutils literal notranslate"><span class="pre">run-whisper-asr</span></code>), and Omni (<code class="docutils literal notranslate"><span class="pre">run-qwen3-omni</span></code>, <code class="docutils literal notranslate"><span class="pre">run-minicpmo</span></code>). Apply them
-with <code class="docutils literal notranslate"><span class="pre">/tag-and-rerun-ci</span> <span class="pre">&lt;selectors&gt;</span></code>, for example
-<code class="docutils literal notranslate"><span class="pre">/tag-and-rerun-ci</span> <span class="pre">moss</span> <span class="pre">fun-asr</span> <span class="pre">minicpmo</span></code>. The Omni model defaults to
-Qwen3-Omni. The
-selectors within a family are exclusive, so each preset gets its own run on
-the new image before merge.</p>
+<p>Run CI with <code class="docutils literal notranslate"><span class="pre">run-all-ci</span></code>. A stage without a model label draws its model at
+random, so give each preset its own run on the new image before merge: keep
+<code class="docutils literal notranslate"><span class="pre">run-all-ci</span></code> and add one model label per stage, for example
+<code class="docutils literal notranslate"><span class="pre">run-tts-moss-tts-local-transformer-v1.5</span></code>, <code class="docutils literal notranslate"><span class="pre">run-asr-fun-asr-nano-2512</span></code> and
+<code class="docutils literal notranslate"><span class="pre">run-omni-minicpm-o-4.5</span></code>. The model labels within a stage are exclusive. The
+CI section of the pull request template lists every label.</p>
 <p>After the merge, everyone pulls the new image and rebuilds their
 virtualenvs; an environment built against the old pins does not run <code class="docutils literal notranslate"><span class="pre">main</span></code>.</p>
 <p>A full CI calibration must follow the merge. The new stack moves throughput
@@ -871,12 +867,12 @@ Recalibrate every family on the merged commit, in its own PR.</p>
                   
 <div class="prev-next-area">
     <a class="left-prev"
-       href="mlx.html"
+       href="ci_labels.html"
        title="previous page">
       <i class="fa-solid fa-angle-left"></i>
       <div class="prev-next-info">
         <p class="prev-next-subtitle">previous</p>
-        <p class="prev-next-title">MLX Path</p>
+        <p class="prev-next-title">CI Workflows and Labels</p>
       </div>
     </a>
 </div>
@@ -937,7 +933,7 @@ By SGLang-Omni Team
   
   <div class="footer-item">
     <p class="last-updated">
-  Last updated on Oct 13, 2026.
+  Last updated on Oct 16, 2026.
   <br/>
 </p>
   </div>
