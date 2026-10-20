@@ -98,15 +98,14 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
-      # Checkpoints, corpus and builds need about 14 GB under VOXT_CI_ROOT and
-      # the runner's work directory; say so plainly instead of failing midway.
+      # Qwen3-Omni adds about 22 GB of checkpoint files to the existing models.
       - name: Check free disk space
         run: |
           mkdir -p "$VOXT_CI_ROOT"
           free_gb=$(df -g "$VOXT_CI_ROOT" | awk 'NR == 2 {print $4}')
           echo "Free under $VOXT_CI_ROOT: ${free_gb} GB"
-          if [ "$free_gb" -lt 17 ]; then
-            echo "::error::Only ${free_gb} GB free on the runner; the Voxt Mac CI needs at least 17 GB."
+          if [ "$free_gb" -lt 40 ]; then
+            echo "::error::Only ${free_gb} GB free on the runner; native model CI needs at least 40 GB."
             exit 1
           else
             :
@@ -125,6 +124,15 @@ jobs:
 
       - name: Build the runtime
         run: |
+          command -v brew >/dev/null || { echo "Omni CI requires a reviewed FFmpeg 7 installation (Homebrew ffmpeg@7); brew is unavailable." >&2; exit 1; }
+          ffmpeg_prefix="$(brew --prefix ffmpeg@7)"
+          test -f "$ffmpeg_prefix/include/libavcodec/avcodec.h" \
+            && test -f "$ffmpeg_prefix/lib/libavcodec.61.dylib" \
+            && test -f "$ffmpeg_prefix/lib/libavformat.61.dylib" \
+            && test -f "$ffmpeg_prefix/lib/libavutil.59.dylib" \
+            || { echo "Omni CI requires FFmpeg 7 headers and dylibs. Provision reviewed ffmpeg@7 on this runner; check licensing and minimum macOS in native/src/qwen3_omni/NOTICE." >&2; exit 1; }
+          export CMAKE_PREFIX_PATH="$ffmpeg_prefix${CMAKE_PREFIX_PATH:+:$CMAKE_PREFIX_PATH}"
+          export SGLANG_BUILD_QWEN3_OMNI=ON
           sglang_omni_mlx/native/scripts/build_runtime.sh "$RUNNER_TEMP/runtime" "$VOXT_CI_ROOT/runtime-build"
 
       # Every golden file is checked, even after one fails, and this chip's
@@ -159,7 +167,20 @@ jobs:
         run: |
           result=0
           for golden in sglang_omni_mlx/native/ci/model_golden/*.json; do
-            "$VOXT_CI_ROOT/venv/bin/python" sglang_omni_mlx/native/ci/check_model_golden.py \
+            checker=check_model_golden.py
+            if [ "$(basename "$golden")" = qwen3_omni.json ]; then
+              if [ "$(sysctl -n hw.memsize)" -lt 51539607552 ]; then
+                echo "::error::Qwen3-Omni requires the qualified 48 GiB memory class."
+                result=1
+                continue
+              else
+                :
+              fi
+              checker=check_omni_golden.py
+            else
+              :
+            fi
+            "$VOXT_CI_ROOT/venv/bin/python" "sglang_omni_mlx/native/ci/$checker" \
               --runtime-bin "$RUNNER_TEMP/runtime/bin" --data-root "$VOXT_CI_ROOT/data" --golden "$golden" \
               --outputs "$RUNNER_TEMP/golden-outputs" || result=1
           done
@@ -179,7 +200,22 @@ jobs:
           NATIVE_RUNTIME_BIN: ${{ runner.temp }}/runtime/bin
           CI_DATA_ROOT: ${{ env.VOXT_CI_ROOT }}/data
         run: |
-          "$VOXT_CI_ROOT/venv/bin/python" -m pytest -q sglang_omni_mlx/native/ci/test_model_servers.py
+          "$VOXT_CI_ROOT/venv/bin/python" -m pytest -q sglang_omni_mlx/native/ci/test_model_servers.py -k 'not qwen3_omni'
+
+      - name: Qwen3-Omni API and golden-harness tests
+        if: ${{ always() }}
+        env:
+          NATIVE_RUNTIME_BIN: ${{ runner.temp }}/runtime/bin
+          CI_DATA_ROOT: ${{ env.VOXT_CI_ROOT }}/data
+        run: |
+          if [ "$(sysctl -n hw.memsize)" -lt 51539607552 ]; then
+            echo "::error::Qwen3-Omni requires the qualified 48 GiB memory class."
+            exit 1
+          else
+            :
+          fi
+          "$VOXT_CI_ROOT/venv/bin/python" -m pytest -q sglang_omni_mlx/native/ci/test_omni_golden.py \
+            && "$VOXT_CI_ROOT/venv/bin/python" -m pytest -q sglang_omni_mlx/native/ci/test_model_servers.py -k qwen3_omni
 
   voxt-unit:
     name: Voxt Omni unit tests

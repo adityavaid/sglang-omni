@@ -76,6 +76,8 @@ and quitting stops it.
 
 ## Tests and CI
 
+- Qwen3-Omni is a standalone native chat server, not a Voxt ASR selection. Its JSON/SSE API covers text, image, audio, video, separate audio/video and embedded video audio, with text or text-and-speech output. The pinned 30B-A3B checkpoint is qualified on the 48 GiB memory class; do not load it alongside the other model-server tests.
+- `ci/check_omni_golden.py` checks the pinned multimodal requests in `ci/model_golden/qwen3_omni.json`, including exact text, token count, finish reason and decoded PCM hashes per chip. An unknown chip fails after saving outputs; import its reviewed `golden-outputs/qwen3_omni.json` artifact with `python sglang_omni_mlx/native/ci/check_omni_golden.py --golden sglang_omni_mlx/native/ci/model_golden/qwen3_omni.json --import /path/to/golden-outputs/qwen3_omni.json`. This fixture gate does not establish the 392-clip corpus accuracy or Python-reference parity.
 - Runtime correctness is checked by `sglang_omni_mlx/native/ci`:
   - `provision.py` fetches the pinned checkpoint and rebuilds the frozen corpus from its public sources, checking every file's SHA-256.
   - `check_golden.py` runs the runtime over the 392-clip corpus with Voxt's Final request and requires every clip to match the golden output. It reports error rates next to the original Swift backend's.

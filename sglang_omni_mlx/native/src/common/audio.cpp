@@ -186,6 +186,13 @@ const std::vector<float> &PeriodicHannWindow() {
   return window;
 }
 
+mx::array SwiftPeriodicHannWindow() {
+  // Swift's Float.pi is one float below C++'s rounded pi.
+  const float pi = std::nextafter(static_cast<float>(M_PI), 0.0f);
+  return .5f - .5f * mx::cos(2.f * pi * mx::arange(kFftSize, mx::float32) /
+                             static_cast<float>(kFftSize));
+}
+
 mx::array LogMel(const std::vector<float> &samples, AudioLayout layout) {
   std::vector<float> padded_samples = samples;
   if (padded_samples.size() < static_cast<size_t>(kFftSize)) {
@@ -241,16 +248,7 @@ mx::array WhisperWindowFeatures(const float *samples, int sample_count,
   const int frame_count = 1 + (padded.shape(0) - kFftSize) / kHopLength;
   const mx::array frames =
       mx::as_strided(padded, {frame_count, kFftSize}, {kHopLength, 1}, 0);
-  // Note (Dayuxiaoshui): Swift's Float.pi is one step below (float)M_PI, and
-  // the window must match Voxt's bit for bit.
-  const float pi = std::nextafter(static_cast<float>(M_PI), 0.0f);
-  const mx::array window = mx::multiply(
-      mx::array(0.5f),
-      mx::subtract(
-          mx::array(1.0f),
-          mx::cos(mx::divide(mx::multiply(mx::array(2.0f * pi),
-                                          mx::arange(kFftSize, mx::float32)),
-                             mx::array(static_cast<float>(kFftSize))))));
+  const mx::array window = SwiftPeriodicHannWindow();
   mx::array power = mx::square(mx::abs(
       mx::fft::rfft(mx::multiply(frames, mx::expand_dims(window, 0)), 1)));
   power = mx::slice(power, {0, 0}, {power.shape(0) - 1, power.shape(1)});

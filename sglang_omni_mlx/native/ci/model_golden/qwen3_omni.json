@@ -1,0 +1,91 @@
+{
+  "model": "mlx-community/Qwen3-Omni-30B-A3B-Instruct-4bit",
+  "checkpoint_sha256": "5ca89b17dace1584efc36dda00af201ec8a3705d9ab28a57e70f7925bfd06af0",
+  "reference": {
+    "source": "Python MLX-VLM 0.7.8",
+    "revision": "93b3cbddd65ed4babff8f22fba491cdba7a21778",
+    "mlx_version": "0.32.3"
+  },
+  "files": {
+    "cars.jpg": "67037864843efb6c9b23ee1c5d90c3fcd75d85f61bc2c09a0953127dcc2a73b7",
+    "query_to_draw.wav": "ae719d9104897969744f5731fe3852bcb548a2fd104ab08e3621c5dbf79792b1",
+    "draw.mp4": "ee2ad048d075fc5fc61e8a2a4e75dbb41e093662f6236bbc6259f1f606d05eda"
+  },
+  "requests": {
+    "text__text": {
+      "messages": [{"role": "user", "content": "Say hello in one short sentence."}],
+      "modalities": ["text"], "temperature": 0, "max_tokens": 24, "stream": false
+    },
+    "text__text_audio": {
+      "messages": [{"role": "user", "content": "Say hello in one short sentence."}],
+      "modalities": ["text", "audio"], "temperature": 0, "max_tokens": 24,
+      "audio": {"voice": "chelsie", "format": "wav"},
+      "talker_temperature": 0, "talker_max_new_tokens": 64, "stream": false
+    },
+    "image__text": {
+      "messages": [{"role": "user", "content": "Describe this picture briefly."}],
+      "images": ["cars.jpg"],
+      "modalities": ["text"], "temperature": 0, "max_tokens": 24, "stream": false
+    },
+    "image__text_audio": {
+      "messages": [{"role": "user", "content": "Describe this picture briefly."}],
+      "images": ["cars.jpg"],
+      "modalities": ["text", "audio"], "temperature": 0, "max_tokens": 24,
+      "audio": {"voice": "chelsie", "format": "wav"},
+      "talker_temperature": 0, "talker_max_new_tokens": 64, "stream": false
+    },
+    "audio__text": {
+      "messages": [{"role": "user", "content": "Answer the question in the audio."}],
+      "audios": ["query_to_draw.wav"],
+      "modalities": ["text"], "temperature": 0, "max_tokens": 24, "stream": false
+    },
+    "audio__text_audio": {
+      "messages": [{"role": "user", "content": "Answer the question in the audio."}],
+      "audios": ["query_to_draw.wav"],
+      "modalities": ["text", "audio"], "temperature": 0, "max_tokens": 24,
+      "audio": {"voice": "chelsie", "format": "wav"},
+      "talker_temperature": 0, "talker_max_new_tokens": 64, "stream": false
+    },
+    "video__text": {
+      "messages": [{"role": "user", "content": "Describe this video briefly."}],
+      "videos": ["draw.mp4"], "video_fps": 1, "video_max_frames": 2, "video_max_pixels": 200704,
+      "modalities": ["text"], "temperature": 0, "max_tokens": 24, "stream": false
+    },
+    "video__text_audio": {
+      "messages": [{"role": "user", "content": "Describe this video briefly."}],
+      "videos": ["draw.mp4"], "video_fps": 1, "video_max_frames": 2, "video_max_pixels": 200704,
+      "modalities": ["text", "audio"], "temperature": 0, "max_tokens": 24,
+      "audio": {"voice": "chelsie", "format": "wav"},
+      "talker_temperature": 0, "talker_max_new_tokens": 64, "stream": false
+    },
+    "video_audio__text": {
+      "messages": [{"role": "user", "content": "Answer the spoken question about this video."}],
+      "videos": ["draw.mp4"], "audios": ["query_to_draw.wav"],
+      "video_fps": 1, "video_max_frames": 2, "video_max_pixels": 200704,
+      "modalities": ["text"], "temperature": 0, "max_tokens": 24, "stream": false
+    },
+    "video_audio__text_audio": {
+      "messages": [{"role": "user", "content": "Answer the spoken question about this video."}],
+      "videos": ["draw.mp4"], "audios": ["query_to_draw.wav"],
+      "video_fps": 1, "video_max_frames": 2, "video_max_pixels": 200704,
+      "modalities": ["text", "audio"], "temperature": 0, "max_tokens": 24,
+      "audio": {"voice": "chelsie", "format": "wav"},
+      "talker_temperature": 0, "talker_max_new_tokens": 64, "stream": false
+    },
+    "video_embedded_audio__text": {
+      "messages": [{"role": "user", "content": "Describe what you see and hear in this video briefly."}],
+      "videos": ["draw.mp4"], "use_audio_in_video": true,
+      "video_fps": 1, "video_max_frames": 2, "video_max_pixels": 200704,
+      "modalities": ["text"], "temperature": 0, "max_tokens": 24, "stream": false
+    },
+    "video_embedded_audio__text_audio": {
+      "messages": [{"role": "user", "content": "Describe what you see and hear in this video briefly."}],
+      "videos": ["draw.mp4"], "use_audio_in_video": true,
+      "video_fps": 1, "video_max_frames": 2, "video_max_pixels": 200704,
+      "modalities": ["text", "audio"], "temperature": 0, "max_tokens": 24,
+      "audio": {"voice": "chelsie", "format": "wav"},
+      "talker_temperature": 0, "talker_max_new_tokens": 64, "stream": false
+    }
+  },
+  "devices": {}
+}

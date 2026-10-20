@@ -31,6 +31,7 @@ std::vector<float> DecodeWav(std::string_view wav_bytes);
 // float32 in the same order as Voxt's Swift front end.
 const std::vector<float> &MelFilterBank(int mel_bin_count = kMelBinCount);
 const std::vector<float> &PeriodicHannWindow();
+mlx::core::array SwiftPeriodicHannWindow();
 
 // Whisper-style log-mel in float32 on MLX, [mel_bins, frames]. The reference
 // layout drops the final centered STFT frame; the Swift layout keeps it.

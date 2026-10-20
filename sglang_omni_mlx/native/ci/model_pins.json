@@ -1,4 +1,25 @@
 {
+  "mlx-community/Qwen3-Omni-30B-A3B-Instruct-4bit": {
+    "revision": "93b3cbddd65ed4babff8f22fba491cdba7a21778",
+    "files": {
+      "README.md": "eceb5e83a53950f25465db26ca7be00a1ab32886f7b73105830da1ca4422ebf4",
+      "chat_template.jinja": "45777d2e798aae1d1ce6844e69edcb23fc0c710009554711c78efab9044da2c8",
+      "chat_template.json": "90c1b81f29e41b7642b0cc02c877a10c8bf6751a8d8fa1d16ac9a718cf1c3d86",
+      "config.json": "3ef3ad3ce6d7cbe62c73206e42e8e4a138c53578a4be097d951b51da8d924fb2",
+      "generation_config.json": "7fa40989be8e43c078907810c41c25d33747523afce3d5a34d5850f930c886cb",
+      "model-00001-of-00005.safetensors": "997df794e8e13adcf16e97d7c7aec08094295bb7d4da79324b9f9c0383ff4d43",
+      "model-00002-of-00005.safetensors": "d57567ed6e60c908d1d6d25c2dd0a3d8fc6377f0306ec6cdcd3c54c25e6435fa",
+      "model-00003-of-00005.safetensors": "177ff73def79a840826e1ab60eb409383a0e6e8225d356953e9fb6be59527ccc",
+      "model-00004-of-00005.safetensors": "c6e4afdceaf6e6db02d2e749c67f9348954befd55ba981266cf22f9ec37288aa",
+      "model-00005-of-00005.safetensors": "cf2a42cd040380fea10cc426417a5f8a940e01a401104aa86d941c4ed6db9864",
+      "model.safetensors.index.json": "ebaff541b0f1db995a2ca602a1f8817a80bb4608481d99bec989ad2addfe767d",
+      "preprocessor_config.json": "b10e27fd4542cf89ec7145942b87f3e65408d4e9f9d031a29acdd293c15fb3fc",
+      "processor_config.json": "a4304533ec1f2d08a8810341c0f643fdf7741bda43c73e11130bb734f33f62ad",
+      "tokenizer.json": "3e2e6634df4dee0f64d320baca03c7e305b3dd2802da11a691be423301348e41",
+      "tokenizer_config.json": "2b41af91b4633bfee5637a3bae7d27cbc2d39c707634fc363e199f461b039035",
+      "vocab.json": "ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910"
+    }
+  },
   "mlx-community/whisper-large-v3-turbo": {
     "revision": "a4aaeec0636e6fef84abdcbe3544cb2bf7e9f6fb",
     "files": {
