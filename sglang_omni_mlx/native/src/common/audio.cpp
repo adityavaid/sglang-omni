@@ -8,14 +8,12 @@
 #include <mutex>
 #include <stdexcept>
 
-namespace qwen3_asr {
+namespace omni_common {
 
 namespace mx = mlx::core;
 
 namespace {
 
-constexpr float kLogMelFloor = 1e-10f;
-constexpr float kLogMelDynamicRange = 8.0f;
 constexpr float kPcm16FullScale = 32768.0f;
 constexpr uint16_t kWavFormatPcm = 1;
 constexpr uint16_t kWavFormatFloat = 3;
@@ -264,54 +262,6 @@ mx::array WhisperWindowFeatures(const float *samples, int sample_count,
       mx::divide(mx::add(log_spectrum, mx::array(4.0f)), mx::array(4.0f)));
 }
 
-int ConvOutputFrames(int frame_count) {
-  for (int i = 0; i < 3; ++i) {
-    frame_count = (frame_count - 1) / 2 + 1;
-  }
-  return frame_count;
-}
-
-namespace {
-
-// Note (Jiaxin Deng): Python floor division; the remainder formula can pass
-// negative operands.
-int FloorDivide(int numerator, int denominator) {
-  const int quotient = numerator / denominator;
-  return (numerator % denominator != 0 &&
-          ((numerator < 0) != (denominator < 0)))
-             ? quotient - 1
-             : quotient;
-}
-
-int RemainderTokens(int frame_count) {
-  const int remainder_frames = frame_count % kChunkFrameCount;
-  const int after_first_conv = FloorDivide(remainder_frames - 1, 2) + 1;
-  return FloorDivide(FloorDivide(after_first_conv - 1, 2) + 1 - 1, 2) + 1;
-}
-
-} // namespace
-
-int ReferenceTokenCount(int frame_count) {
-  return RemainderTokens(frame_count) +
-         (frame_count / kChunkFrameCount) * kChunkTokenCount;
-}
-
-int SwiftTokenCount(int frame_count) {
-  const float chunks =
-      static_cast<float>(frame_count) / static_cast<float>(kChunkFrameCount);
-  return static_cast<int>(
-      std::trunc(static_cast<float>(RemainderTokens(frame_count)) +
-                 chunks * static_cast<float>(kChunkTokenCount)));
-}
-
-int TokenCount(int frame_count, AudioLayout layout) {
-  if (layout == AudioLayout::kReference) {
-    return ReferenceTokenCount(frame_count);
-  } else {
-    return SwiftTokenCount(frame_count);
-  }
-}
-
 bool PeakIsSilent(const float *samples, size_t sample_count,
                   float peak_threshold) {
   for (size_t i = 0; i < sample_count; ++i) {
@@ -323,4 +273,4 @@ bool PeakIsSilent(const float *samples, size_t sample_count,
   return true;
 }
 
-} // namespace qwen3_asr
+} // namespace omni_common
