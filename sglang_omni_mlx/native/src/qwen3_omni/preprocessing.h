@@ -16,12 +16,13 @@ struct MediaEntry {
 struct PreparedInput {
   std::vector<int> tokens;
   mx::array positions;
-  int delta;
+  float delta;
   std::vector<MediaEntry> entries;
 };
-std::pair<mx::array, int> position_ids(const std::vector<int> &tokens,
-                                       const std::vector<MediaEntry> &entries);
+std::pair<mx::array, float>
+position_ids(const std::vector<int> &tokens,
+             const std::vector<MediaEntry> &entries);
 PreparedInput prepare(const ChatRequest &request,
-                      const qwen3_asr::Tokenizer &tokenizer,
+                      const omni_common::Tokenizer &tokenizer,
                       const Cancellation &cancelled);
 } // namespace qwen3_omni

@@ -153,7 +153,7 @@ mx::array Vocoder::forward(const mx::array &codes,
     auto input = weights.rms(layer + ".post_attention_layernorm", hidden_states,
                              epsilon);
     auto gated =
-        qwen3_asr::Silu(weights.linear(layer + ".mlp.gate_proj", input)) *
+        omni_common::Silu(weights.linear(layer + ".mlp.gate_proj", input)) *
         weights.linear(layer + ".mlp.up_proj", input);
     hidden_states =
         hidden_states + weights.linear(layer + ".mlp.down_proj", gated) *
@@ -173,7 +173,7 @@ mx::array Vocoder::forward(const mx::array &codes,
     auto normalized = weights.norm(name + ".1.norm", convolved, 1e-6);
     hidden_states =
         hidden_states + weights.linear(name + ".1.pwconv2",
-                                       qwen3_asr::Gelu(weights.linear(
+                                       omni_common::Gelu(weights.linear(
                                            name + ".1.pwconv1", normalized))) *
                             weights[name + ".1.gamma"];
   }

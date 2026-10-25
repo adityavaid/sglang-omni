@@ -16,7 +16,7 @@ int main(int count, char **values) {
       if (std::filesystem::file_size(path) > 64 * 1024 * 1024) {
         throw std::invalid_argument("request exceeds 64 MiB");
       } else {
-        requests.push_back(parse_request(qwen3_asr::ReadJson(path),
+        requests.push_back(parse_request(omni_common::ReadJson(path),
                                          arguments.model_name,
                                          arguments.allowed_paths));
       }

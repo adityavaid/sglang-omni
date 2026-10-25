@@ -159,15 +159,6 @@ jobs:
 
       - name: Build the runtime
         run: |
-          command -v brew >/dev/null || { echo "Omni CI requires a reviewed FFmpeg 7 installation (Homebrew ffmpeg@7); brew is unavailable." >&2; exit 1; }
-          ffmpeg_prefix="$(brew --prefix ffmpeg@7)"
-          test -f "$ffmpeg_prefix/include/libavcodec/avcodec.h" \
-            && test -f "$ffmpeg_prefix/lib/libavcodec.61.dylib" \
-            && test -f "$ffmpeg_prefix/lib/libavformat.61.dylib" \
-            && test -f "$ffmpeg_prefix/lib/libavutil.59.dylib" \
-            || { echo "Omni CI requires FFmpeg 7 headers and dylibs. Provision reviewed ffmpeg@7 on this runner; check licensing and minimum macOS in native/src/qwen3_omni/NOTICE." >&2; exit 1; }
-          export CMAKE_PREFIX_PATH="$ffmpeg_prefix${CMAKE_PREFIX_PATH:+:$CMAKE_PREFIX_PATH}"
-          export SGLANG_BUILD_QWEN3_OMNI=ON
           sglang_omni_mlx/native/scripts/build_runtime.sh "$RUNNER_TEMP/runtime" "$VOXT_CI_ROOT/runtime-build"
 
       - name: Provision the Music3 checkpoint

@@ -23,7 +23,7 @@ mx::array rows(const mx::array &tensor, int start, int stop, int axis = 0);
 class Weights {
 public:
   Weights(const std::filesystem::path &directory, const Json &configuration);
-  Weights(qwen3_asr::WeightMap tensors, int group_size, int bits);
+  Weights(omni_common::WeightMap tensors, int group_size, int bits);
   const mx::array &operator[](const std::string &name) const;
   bool contains(const std::string &name) const;
   void require(const std::string &name, const mx::Shape &shape);
@@ -41,7 +41,7 @@ public:
                  float epsilon = 1e-5) const;
 
 private:
-  qwen3_asr::WeightMap tensors;
+  omni_common::WeightMap tensors;
   std::set<std::string> consumed;
   int group_size;
   int bits;

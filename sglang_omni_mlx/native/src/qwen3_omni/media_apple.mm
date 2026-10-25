@@ -8,11 +8,14 @@
 #include <curl/curl.h>
 #include <fcntl.h>
 #include <fstream>
+#include <memory>
 #include <numeric>
 #include <unistd.h>
 
 namespace qwen3_omni {
 namespace {
+using OwnedImage = std::unique_ptr<CGImage, decltype(&CGImageRelease)>;
+
 NSURL *local_url(const std::string &source) {
   NSString *text = [NSString stringWithUTF8String:source.c_str()];
   NSString *decoded = [text stringByRemovingPercentEncoding];
@@ -237,17 +240,19 @@ VisualInput image_pixels(const std::string &source,
       (__bridge NSString *)kCGImageSourceThumbnailMaxPixelSize : @2048,
       (__bridge NSString *)kCGImageSourceCreateThumbnailWithTransform : @YES
     };
-    CGImageRef image = CGImageSourceCreateThumbnailAtIndex(
-        decoder, 0, (__bridge CFDictionaryRef)options);
+    OwnedImage image(CGImageSourceCreateThumbnailAtIndex(
+                         decoder, 0, (__bridge CFDictionaryRef)options),
+                     CGImageRelease);
     CFRelease(decoder);
     if (!image) {
       throw std::invalid_argument("cannot decode image");
     } else {
     }
-    auto [resized_height, resized_width] = resize_dimensions(
-        CGImageGetHeight(image), CGImageGetWidth(image), 32, 3136, 12845056);
-    auto frame = pixels(image, resized_height, resized_width);
-    CGImageRelease(image);
+    auto [resized_height, resized_width] =
+        resize_dimensions(CGImageGetHeight(image.get()),
+                          CGImageGetWidth(image.get()), 32, 3136, 12845056);
+    auto frame = pixels(image.get(), resized_height, resized_width);
+    image.reset();
     auto duplicated = frame;
     duplicated.insert(duplicated.end(), frame.begin(), frame.end());
     return {patchify(duplicated, 2, resized_height, resized_width),
@@ -393,21 +398,21 @@ VisualInput video_pixels(const std::string &source, const ChatRequest &request,
       check_cancelled(cancelled);
       int frame_index = int(
           std::nearbyint(double(i) * (total_frames - 1) / (frame_count - 1)));
-      CGImageRef image = [generator copyCGImageAtTime:timestamps[frame_index]
-                                           actualTime:nullptr
-                                                error:&error];
+      OwnedImage image([generator copyCGImageAtTime:timestamps[frame_index]
+                                         actualTime:nullptr
+                                              error:&error],
+                       CGImageRelease);
       if (!image) {
         throw std::invalid_argument("cannot decode sampled video frame");
       } else {
       }
-      auto [smart_height, smart_width] =
-          resize_dimensions(CGImageGetHeight(image), CGImageGetWidth(image), 28,
-                            request.video_min_pixels, maximum_pixels);
+      auto [smart_height, smart_width] = resize_dimensions(
+          CGImageGetHeight(image.get()), CGImageGetWidth(image.get()), 28,
+          request.video_min_pixels, maximum_pixels);
       auto [height, width] =
           resize_dimensions(smart_height, smart_width, 32,
                             request.video_min_pixels, request.video_max_pixels);
       if (i > 0 && (height != output_height || width != output_width)) {
-        CGImageRelease(image);
         throw std::invalid_argument("video geometry changed");
       } else {
         output_height = height;
@@ -419,18 +424,20 @@ VisualInput video_pixels(const std::string &source, const ChatRequest &request,
           kCGImageAlphaNoneSkipLast);
       CGColorSpaceRelease(color_space);
       if (!context) {
-        CGImageRelease(image);
         throw std::invalid_argument("cannot resize video frame");
       } else {
       }
       CGContextSetInterpolationQuality(context, kCGInterpolationHigh);
       CGContextDrawImage(context, CGRectMake(0, 0, smart_width, smart_height),
-                         image);
-      CGImageRelease(image);
-      CGImageRef resized = CGBitmapContextCreateImage(context);
+                         image.get());
+      image.reset();
+      OwnedImage resized(CGBitmapContextCreateImage(context), CGImageRelease);
       CGContextRelease(context);
-      auto frame = pixels(resized, height, width);
-      CGImageRelease(resized);
+      if (!resized) {
+        throw std::invalid_argument("cannot copy resized video frame");
+      } else {
+      }
+      auto frame = pixels(resized.get(), height, width);
       frames.insert(frames.end(), frame.begin(), frame.end());
     }
     return {patchify(frames, frame_count, output_height, output_width),

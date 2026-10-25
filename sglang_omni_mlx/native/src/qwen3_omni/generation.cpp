@@ -111,7 +111,7 @@ void OmniModel::generate(const ChatRequest &request, const ChunkEmitter &emit,
       request.max_tokens, {configuration.at("im_end_token_id").get<int>()},
       request.sampling, cancelled,
       [&](const mx::array &token) {
-        int position = cache.front().offset + prepared.delta;
+        float position = cache.front().offset + prepared.delta;
         auto input =
             weights.embedding("thinker.language_model.model.embed_tokens",
                               mx::reshape(token, {1, 1}));
@@ -154,9 +154,9 @@ void OmniModel::generate(const ChatRequest &request, const ChunkEmitter &emit,
 }
 mx::array OmniModel::projection(const std::string &name,
                                 const mx::array &input) const {
-  return weights.linear(
-      "talker." + name + ".linear_fc2",
-      qwen3_asr::Silu(weights.linear("talker." + name + ".linear_fc1", input)));
+  return weights.linear("talker." + name + ".linear_fc2",
+                        omni_common::Silu(weights.linear(
+                            "talker." + name + ".linear_fc1", input)));
 }
 void OmniModel::generate_speech(const ChatRequest &request,
                                 const PreparedInput &prepared,

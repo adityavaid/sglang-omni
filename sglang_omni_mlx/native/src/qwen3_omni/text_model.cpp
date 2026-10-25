@@ -107,7 +107,7 @@ mx::array
 TextModel::feed_forward(const std::string &name, const mx::array &input,
                         const std::optional<mx::array> &experts) const {
   auto gated =
-      qwen3_asr::Silu(weights.linear(name + ".gate_proj", input, experts)) *
+      omni_common::Silu(weights.linear(name + ".gate_proj", input, experts)) *
       weights.linear(name + ".up_proj", input, experts);
   return weights.linear(name + ".down_proj", gated, experts);
 }

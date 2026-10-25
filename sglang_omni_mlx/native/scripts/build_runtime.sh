@@ -27,7 +27,8 @@ export PATH="$work/venv/bin:$PATH"
 cmake -S "$native_dir" -B "$work/cmake" -G Ninja -DCMAKE_BUILD_TYPE=Release \
   -DMLX_DIR="$mlx_dir" -DCMAKE_INSTALL_PREFIX="$output" \
   -DCMAKE_OSX_DEPLOYMENT_TARGET="$deployment_target" \
-  -DCMAKE_OSX_ARCHITECTURES=arm64
+  -DCMAKE_OSX_ARCHITECTURES=arm64 \
+  -DSGLANG_BUILD_QWEN3_OMNI="$build_omni"
 cmake --build "$work/cmake"
 cmake --install "$work/cmake"
 echo "VOXT_OMNI_RUNTIME=$output/bin/qwen3_asr_server"

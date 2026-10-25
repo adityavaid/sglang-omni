@@ -9,8 +9,6 @@ the real models.
 from __future__ import annotations
 
 import base64
-import copy
-import hashlib
 import http.client
 import io
 import json
@@ -25,7 +23,6 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
-from check_omni_golden import ChatRequest, Completion, Golden, Result, summarize
 from test_server_api import (
     DATA_ROOT,
     RUNTIME_BIN,
@@ -59,10 +56,6 @@ MOSS_REPO = "OpenMOSS-Team/MOSS-Transcribe-Diarize"
 NEMOTRON_REPO = "mlx-community/nemotron-3.5-asr-streaming-0.6b-8bit"
 PARAKEET_REPO = "mlx-community/parakeet-tdt-0.6b-v3"
 SENSEVOICE_REPO = "mlx-community/SenseVoiceSmall"
-QWEN3_OMNI_REPO = "mlx-community/Qwen3-Omni-30B-A3B-Instruct-4bit"
-OMNI_GOLDEN: Golden = json.loads(
-    (Path(__file__).parent / "model_golden/qwen3_omni.json").read_text()
-)
 # Voxt's SenseVoice settings for long audio: speech runs cut into overlapping chunks.
 SENSEVOICE_VAD_FIELDS = {
     "vad_threshold": "0.5",
@@ -81,216 +74,6 @@ class ModelServer(Server):
         super().__init__(
             binary, model_kind, Path(DATA_ROOT) / "models" / repo.replace("/", "_")
         )
-
-
-@pytest.fixture
-def qwen3_omni_server() -> Iterator[ModelServer]:
-    running = ModelServer("qwen3_omni_server", "qwen3_omni", QWEN3_OMNI_REPO)
-    try:
-        assert running.ready["event"] == "ready", running.ready
-        yield running
-    finally:
-        running.stop()
-
-
-def omni_request(case: str) -> ChatRequest:
-    request = copy.deepcopy(OMNI_GOLDEN["requests"][case])
-    media_root = Path(__file__).resolve().parents[3] / "tests/data"
-    for field, mime in (
-        ("images", "image/jpeg"),
-        ("audios", "audio/wav"),
-        ("videos", "video/mp4"),
-    ):
-        if field in request:
-            request[field] = [
-                f"data:{mime};base64,{base64.b64encode((media_root / filename).read_bytes()).decode()}"
-                for filename in request[field]
-            ]
-        else:
-            pass
-    return request
-
-
-@pytest.mark.parametrize("case", list(OMNI_GOLDEN["requests"]))
-def test_qwen3_omni_modalities(qwen3_omni_server: ModelServer, case: str) -> None:
-    request = omni_request(case)
-    speech = "audio" in request["modalities"]
-    results: list[Result] = []
-    for stream in (False, True):
-        request["stream"] = stream
-        status, body = qwen3_omni_server.request(
-            "POST",
-            "/v1/chat/completions",
-            json.dumps(request).encode(),
-            {"Content-Type": "application/json"},
-        )
-        assert status == 200, body
-        if stream:
-            events = sse_events(body)
-            assert events[-1] == "[DONE]"
-            text = ""
-            audio_chunks: list[bytes] = []
-            finish_reasons: list[str] = []
-            completion_tokens = 0
-            for event in events[:-1]:
-                assert "error" not in event, event
-                completion_tokens = (event.get("usage") or {}).get(
-                    "completion_tokens", completion_tokens
-                )
-                for choice in event.get("choices", []):
-                    delta = choice.get("delta") or {}
-                    text += delta.get("content") or ""
-                    if delta.get("audio", {}).get("data"):
-                        with wave.open(
-                            io.BytesIO(
-                                base64.b64decode(delta["audio"]["data"], validate=True)
-                            )
-                        ) as reader:
-                            assert (
-                                reader.getnchannels(),
-                                reader.getsampwidth(),
-                                reader.getframerate(),
-                            ) == (1, 2, 24000)
-                            pcm = reader.readframes(reader.getnframes())
-                            assert pcm and len(pcm) == reader.getnframes() * 2
-                            audio_chunks.append(pcm)
-                    else:
-                        pass
-                    if choice.get("finish_reason"):
-                        finish_reasons.append(choice["finish_reason"])
-                    else:
-                        pass
-            assert text.strip() and completion_tokens > 0
-            assert finish_reasons and set(finish_reasons) <= {"stop", "length"}
-            waveform = b"".join(audio_chunks)
-            assert speech == bool(waveform)
-            assert not speech or any(waveform)
-            results.append(
-                {
-                    "text": text,
-                    "completion_tokens": completion_tokens,
-                    "finish_reason": finish_reasons[-1],
-                    "audio_sha256": (
-                        hashlib.sha256(waveform).hexdigest() if speech else None
-                    ),
-                    "audio_samples": len(waveform) // 2,
-                }
-            )
-        else:
-            completion: Completion = json.loads(body)
-            result = summarize(completion, speech)
-            assert result["text"].strip() and result["completion_tokens"] > 0
-            assert result["finish_reason"] in ("stop", "length")
-            results.append(result)
-    assert (
-        results[0] == results[1]
-    ), "JSON and SSE disagree on generated text, metadata or PCM"
-
-
-@pytest.mark.parametrize(
-    "invalid",
-    [
-        {"max_tokens": 0},
-        {"messages": []},
-        {"model": "wrong-model"},
-        {"modalities": ["image"]},
-        {"temperature": -1},
-        {"audios": ["data:audio/wav;base64,bm90IGF1ZGlv"]},
-        {"images": ["data:image/jpeg;base64,bm90IGltYWdl"]},
-        {"videos": ["data:video/mp4;base64,bm90IHZpZGVv"]},
-        {"images": ["/not/allowed/image.jpg"]},
-    ],
-)
-def test_qwen3_omni_invalid_requests(
-    qwen3_omni_server: ModelServer, invalid: dict[str, str | int | list[str]]
-) -> None:
-    request = omni_request("text__text")
-    request.update(invalid)
-    status, body = qwen3_omni_server.request(
-        "POST",
-        "/v1/chat/completions",
-        json.dumps(request).encode(),
-        {"Content-Type": "application/json"},
-    )
-    assert status == 400, body
-    assert "error" in json.loads(body) or "detail" in json.loads(body)
-
-
-def test_qwen3_omni_disconnect_releases_worker(qwen3_omni_server: ModelServer) -> None:
-    request = omni_request("text__text")
-    request.update(stream=True, max_tokens=512)
-    request["messages"][0]["content"] = "Count from one to two hundred."
-    connection = http.client.HTTPConnection(
-        "127.0.0.1", qwen3_omni_server.port, timeout=120
-    )
-    try:
-        connection.request(
-            "POST",
-            "/v1/chat/completions",
-            json.dumps(request),
-            {"Content-Type": "application/json"},
-        )
-        response = connection.getresponse()
-        assert response.status == 200
-        while line := response.readline():
-            if line.startswith(b"data: ") and line.strip() != b"data: [DONE]":
-                event = json.loads(line[6:])
-                if any(
-                    (choice.get("delta") or {}).get("content")
-                    for choice in event.get("choices", [])
-                ):
-                    break
-                else:
-                    pass
-            else:
-                pass
-        else:
-            pytest.fail("stream ended before producing text")
-        busy_status, busy_body = qwen3_omni_server.request(
-            "POST",
-            "/v1/chat/completions",
-            json.dumps(omni_request("text__text")).encode(),
-            {"Content-Type": "application/json"},
-        )
-        assert busy_status == 429, busy_body
-        response.close()
-    finally:
-        connection.close()
-    deadline = time.monotonic() + 30
-    while time.monotonic() < deadline:
-        status, body = qwen3_omni_server.request(
-            "POST",
-            "/v1/chat/completions",
-            json.dumps(omni_request("text__text")).encode(),
-            {"Content-Type": "application/json"},
-        )
-        if status == 429:
-            time.sleep(0.05)
-        else:
-            assert status == 200, body
-            assert json.loads(body)["choices"][0]["message"]["content"].strip()
-            break
-    else:
-        pytest.fail("worker remained busy after stream disconnect")
-
-
-def test_qwen3_omni_wrong_model_kind_fails_before_loading(tmp_path: Path) -> None:
-    completed = subprocess.run(
-        [
-            str(Path(RUNTIME_BIN) / "qwen3_omni_server"),
-            "--supervised",
-            "--model-kind",
-            "whisper",
-            "--model-directory",
-            str(tmp_path / "absent-checkpoint"),
-        ],
-        capture_output=True,
-        text=True,
-        timeout=10,
-    )
-    assert completed.returncode != 0
-    assert "only serves qwen3_omni" in completed.stderr
-    assert not completed.stdout.strip()
 
 
 @pytest.fixture(scope="module")

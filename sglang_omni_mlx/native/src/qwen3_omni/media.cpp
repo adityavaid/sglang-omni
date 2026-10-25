@@ -37,7 +37,7 @@ mx::array audio_mel(const std::vector<float> &samples) {
   }
   auto indices = mx::reshape(mx::arange(frames, mx::int32), {-1, 1}) * 160 +
                  mx::reshape(mx::arange(400, mx::int32), {1, -1});
-  auto window = qwen3_asr::SwiftPeriodicHannWindow();
+  auto window = omni_common::SwiftPeriodicHannWindow();
   auto transformed = mx::fft::rfft(
       mx::take(mx::array(centered.data(), {int(centered.size())}), indices) *
           window,

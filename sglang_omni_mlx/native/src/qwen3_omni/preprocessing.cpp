@@ -9,8 +9,9 @@ float next_position(const std::vector<std::array<float, 3>> &positions) {
   return *std::max_element(last.begin(), last.end()) + 1;
 }
 } // namespace
-std::pair<mx::array, int> position_ids(const std::vector<int> &tokens,
-                                       const std::vector<MediaEntry> &entries) {
+std::pair<mx::array, float>
+position_ids(const std::vector<int> &tokens,
+             const std::vector<MediaEntry> &entries) {
   std::vector<float> positions(3 * tokens.size());
   size_t index = 0, entry_index = 0;
   float position = 0;
@@ -50,13 +51,13 @@ std::pair<mx::array, int> position_ids(const std::vector<int> &tokens,
   if (entry_index != entries.size() || positions.empty()) {
     throw std::invalid_argument("template removed media or empty prompt");
   } else {
-    int delta = int(*std::max_element(positions.begin(), positions.end()) + 1 -
-                    float(tokens.size()));
+    float delta = *std::max_element(positions.begin(), positions.end()) + 1 -
+                  float(tokens.size());
     return {mx::array(positions.data(), {3, 1, int(tokens.size())}), delta};
   }
 }
 PreparedInput prepare(const ChatRequest &request,
-                      const qwen3_asr::Tokenizer &tokenizer,
+                      const omni_common::Tokenizer &tokenizer,
                       const Cancellation &cancelled) {
   std::string prompt;
   size_t media_token_count = 0;

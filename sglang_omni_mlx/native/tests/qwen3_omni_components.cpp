@@ -236,7 +236,7 @@ int main() {
         << R"({"added_tokens_decoder":{}})";
     std::ofstream(tokenizer_directory / "tokenizer.json")
         << R"({"model":{"vocab":{"a":0,"b":1,"ab":2},"merges":[["a","b"]]},"added_tokens":[]})";
-    qwen3_asr::Tokenizer tokenizer(tokenizer_directory);
+    omni_common::Tokenizer tokenizer(tokenizer_directory);
     check(tokenizer.Encode("ab") == std::vector<int>{2},
           "tokenizer.json merge pairs must work without merges.txt");
     Json chat_vocabulary = {{"a", 0}, {"b", 1}, {"ab", 2}, {"u", 3},
@@ -245,7 +245,7 @@ int main() {
     std::ofstream(tokenizer_directory / "vocab.json") << chat_vocabulary;
     std::ofstream(tokenizer_directory / "tokenizer_config.json")
         << R"({"added_tokens_decoder":{"11":{"content":"<|im_start|>","special":true},"12":{"content":"<|im_end|>","special":true},"13":{"content":"<think>","special":true},"14":{"content":"</think>","special":true}}})";
-    qwen3_asr::Tokenizer chat_tokenizer(tokenizer_directory);
+    omni_common::Tokenizer chat_tokenizer(tokenizer_directory);
     auto split_text =
         parse_request({{"messages",
                         {{{"role", "user"},
@@ -270,7 +270,7 @@ int main() {
         "trailing assistant history must follow checkpoint reasoning template");
     std::filesystem::remove_all(tokenizer_directory);
     auto packed = mx::quantize(mx::ones({2, 64}), 64, 4);
-    qwen3_asr::WeightMap tensors;
+    omni_common::WeightMap tensors;
     tensors.emplace("packed.weight", packed[0]);
     tensors.emplace("packed.scales", packed[1]);
     tensors.emplace("packed.biases", packed[2]);
@@ -302,7 +302,7 @@ int main() {
               selected_experts.data<float>()[2] == 64,
           "quantized expert gather must preserve routing order and "
           "expert-specific offsets");
-    qwen3_asr::WeightMap expert_tensors;
+    omni_common::WeightMap expert_tensors;
     std::string layer = "tiny.layers.0";
     for (const auto &name : {"input_layernorm", "post_attention_layernorm"}) {
       expert_tensors.emplace(layer + "." + name + ".weight", mx::ones({64}));
@@ -396,6 +396,55 @@ int main() {
     check(media_delta == 94 && media_positions.data<float>()[6] == 7,
           "decode position delta must use global spatial maximum while "
           "subsequent text uses media tail");
+    for (float temporal_stride : {3.25f, 13.25f}) {
+      MediaEntry video;
+      video.user_owned = true;
+      video.tokens = {151652};
+      video.positions = {{0, 0, 0}};
+      for (int frame = 0; frame < 2; ++frame) {
+        for (int row = 0; row < 2; ++row) {
+          for (int column = 0; column < 2; ++column) {
+            video.tokens.push_back(151656);
+            video.positions.push_back({frame * temporal_stride + 1,
+                                       float(row + 1), float(column + 1)});
+          }
+        }
+      }
+      video.tokens.push_back(151653);
+      video.positions.push_back(
+          {temporal_stride + 2, temporal_stride + 2, temporal_stride + 2});
+      auto tokens = video.tokens;
+      tokens.push_back(7);
+      auto [positions, delta] = position_ids(tokens, {video});
+      mx::eval(positions);
+      check(positions.data<float>()[tokens.size() - 1] == temporal_stride + 3,
+            "fractional video position must survive trailing prompt text");
+      for (int decoded = 0; decoded < 3; ++decoded) {
+        const float position = int(tokens.size()) + decoded + delta;
+        check(position == temporal_stride + 4 + decoded,
+              "thinker and talker decode offsets must retain fractional "
+              "positive and negative deltas");
+        const auto factors =
+            rotary_factors(mx::full({3, 1, 1}, position), 128, 10000.f, true);
+        mx::eval(factors.first);
+        check(std::abs(factors.first.data<float>()[0] -
+                       std::cos(temporal_stride + 4 + decoded)) < 1e-6f,
+              "decode rotary factors must use the continuous video position");
+      }
+    }
+    for (int attempt = 0; attempt < 4; ++attempt) {
+      bool rejected = false;
+      try {
+        image_pixels(
+            "data:image/png;base64,"
+            "iVBORw0KGgoAAAANSUhEUgAAAgAAAAABCAIAAAAn2YEhAAAAFElEQVR4nGOoHwWj"
+            "YBSMglEwIgEACRH6H2A/SCcAAAAASUVORK5CYII=",
+            {});
+      } catch (const std::invalid_argument &error) {
+        rejected = std::string(error.what()) == "unsupported image geometry";
+      }
+      check(rejected, "skinny images must remain rejected after decoding");
+    }
     auto silence_mel = audio_mel(std::vector<float>(3200, 0));
     const float swift_pi = std::nextafter(float(M_PI), 0.f);
     auto legacy_whisper_window =
@@ -403,7 +452,7 @@ int main() {
         (1.f - mx::cos(2.f * swift_pi * mx::arange(400, mx::float32) / 400.f));
     check(
         mx::array_equal(legacy_whisper_window,
-                        qwen3_asr::SwiftPeriodicHannWindow())
+                        omni_common::SwiftPeriodicHannWindow())
             .item<bool>(),
         "shared Hann extraction must preserve existing Whisper window values");
     std::vector<float> nonsilent(3200);

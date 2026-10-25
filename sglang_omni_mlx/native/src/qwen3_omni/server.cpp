@@ -8,6 +8,7 @@
 #include <cstring>
 #include <iostream>
 #include <libproc.h>
+#include <memory>
 #include <mutex>
 #include <poll.h>
 #include <sys/socket.h>
@@ -261,16 +262,21 @@ int main(int count, char **values) {
                              "30000",
                              nullptr};
     mg_callbacks callbacks{};
-    auto context = mg_start(&callbacks, &server, options);
+    auto stop_listener = [&server](mg_context *context) {
+      server.stopping = true;
+      mg_stop(context);
+    };
+    std::unique_ptr<mg_context, decltype(stop_listener)> context(
+        mg_start(&callbacks, &server, options), stop_listener);
     if (!context) {
       throw std::runtime_error("cannot start HTTP listener");
     } else {
     }
     for (const auto *path : {"/health", "/v1/models", "/v1/chat/completions"}) {
-      mg_set_request_handler(context, path, route, &server);
+      mg_set_request_handler(context.get(), path, route, &server);
     }
     mg_server_port ports[1];
-    mg_get_server_ports(context, 1, ports);
+    mg_get_server_ports(context.get(), 1, ports);
     if (arguments.supervised) {
       std::cout << Json({{"event", "ready"},
                          {"host", arguments.host},
@@ -293,8 +299,9 @@ int main(int count, char **values) {
           server.stopping = true;
         } else {
           auto command = Json::parse(line, nullptr, false);
-          if (command.is_object() &&
-              command.value("command", "") == "shutdown") {
+          if (command.is_object() && command.contains("command") &&
+              command.at("command").is_string() &&
+              command.at("command") == "shutdown") {
             server.stopping = true;
           } else {
             std::cerr << "ignored invalid supervisor command\n";
@@ -303,8 +310,7 @@ int main(int count, char **values) {
       } else {
       }
     }
-    server.stopping = true;
-    mg_stop(context);
+    context.reset();
     mx::synchronize();
     return 0;
   } catch (const std::exception &error) {

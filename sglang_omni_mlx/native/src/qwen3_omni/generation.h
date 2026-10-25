@@ -40,7 +40,7 @@ private:
                        const std::vector<int> &tokens, const ChunkEmitter &emit,
                        const Cancellation &cancelled);
   Json configuration;
-  qwen3_asr::Tokenizer tokenizer;
+  omni_common::Tokenizer tokenizer;
   Weights weights;
   TextModel thinker;
   TextModel talker;

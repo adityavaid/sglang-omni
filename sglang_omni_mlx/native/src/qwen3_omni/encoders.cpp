@@ -52,7 +52,7 @@ mx::array VisionEncoder::merge(const mx::array &hidden_states,
       {-1, dimensions * 4});
   return weights.linear(
       name + ".linear_fc2",
-      qwen3_asr::Gelu(weights.linear(name + ".linear_fc1", normalized)));
+      omni_common::Gelu(weights.linear(name + ".linear_fc1", normalized)));
 }
 std::pair<mx::array, std::vector<mx::array>>
 VisionEncoder::forward(const mx::array &patches, const VisualGrid &grid,
@@ -153,7 +153,7 @@ VisionEncoder::forward(const mx::array &patches, const VisualGrid &grid,
         hidden_states + weights.linear(layer + ".attn.proj", output);
     hidden_states =
         hidden_states + weights.linear(layer + ".mlp.linear_fc2",
-                                       qwen3_asr::Gelu(weights.linear(
+                                       omni_common::Gelu(weights.linear(
                                            layer + ".mlp.linear_fc1",
                                            weights.norm(layer + ".norm2",
                                                         hidden_states, 1e-6))));
@@ -225,7 +225,7 @@ mx::array AudioEncoder::forward(const mx::array &mel,
   auto input = mx::concatenate(chunk_inputs, 0);
   for (int i = 1; i <= 3; ++i) {
     auto name = prefix + ".conv2d" + std::to_string(i);
-    input = qwen3_asr::Gelu(
+    input = omni_common::Gelu(
         mx::conv2d(input, weights[name + ".weight"], {2, 2}, {1, 1}) +
         weights[name + ".bias"]);
   }
@@ -280,7 +280,7 @@ mx::array AudioEncoder::forward(const mx::array &mel,
         hidden_states +
         weights.linear(
             layer + ".fc2",
-            qwen3_asr::Gelu(weights.linear(
+            omni_common::Gelu(weights.linear(
                 layer + ".fc1",
                 weights.norm(layer + ".final_layer_norm", hidden_states))));
     if (i % 4 == 3) {
@@ -289,7 +289,7 @@ mx::array AudioEncoder::forward(const mx::array &mel,
     }
   }
   return weights.linear(prefix + ".proj2",
-                        qwen3_asr::Gelu(weights.linear(
+                        omni_common::Gelu(weights.linear(
                             prefix + ".proj1",
                             weights.norm(prefix + ".ln_post", hidden_states))));
 }

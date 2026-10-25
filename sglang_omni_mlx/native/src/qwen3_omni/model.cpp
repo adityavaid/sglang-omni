@@ -8,7 +8,7 @@
 namespace qwen3_omni {
 OmniModel::OmniModel(const std::filesystem::path &directory)
     : configuration(validate_configuration(
-          qwen3_asr::ReadJson(directory / "config.json"))),
+          omni_common::ReadJson(directory / "config.json"))),
       tokenizer(directory),
       weights(directory, configuration.at("quantization")),
       thinker(weights, configuration.at("thinker_config").at("text_config"),
@@ -71,7 +71,7 @@ mx::array rows(const mx::array &tensor, int start, int stop, int axis) {
   return mx::slice(tensor, begin, end);
 }
 
-Weights::Weights(qwen3_asr::WeightMap tensors, int group_size, int bits)
+Weights::Weights(omni_common::WeightMap tensors, int group_size, int bits)
     : tensors(std::move(tensors)), group_size(group_size), bits(bits) {}
 
 Weights::Weights(const std::filesystem::path &directory,
@@ -84,7 +84,7 @@ Weights::Weights(const std::filesystem::path &directory,
   } else {
   }
   const auto index =
-      qwen3_asr::ReadJson(directory / "model.safetensors.index.json")
+      omni_common::ReadJson(directory / "model.safetensors.index.json")
           .at("weight_map");
   std::set<std::string> shards;
   for (const auto &[name, shard] : index.items()) {
